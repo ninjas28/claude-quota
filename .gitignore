@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 .claude/
+
+# Swift / SwiftPM
+menubar/.build/
+menubar/build/
+*.xcodeproj
+.swiftpm/
+DerivedData/

@@ -1,99 +1,106 @@
 # claude-quota
 
-Check your Claude Max subscription quota from the command line.
+Your Claude Max quota in the macOS menu bar, plus the original CLI checker.
 
-Anthropic doesn't expose a public API for checking how much of your Claude Max quota you've used. But every API response includes undocumented `anthropic-ratelimit-unified-*` headers with your exact utilization percentages. This tool captures those headers by routing a single cheap Claude Code CLI call through a local proxy.
+![menu bar ring showing session and weekly usage](https://img.shields.io/badge/macOS-13%2B-black)
 
-## Example output
+## What's here
 
-```
-  Claude Max Quota
-  ================================================
+| | |
+|---|---|
+| **`menubar/`** | **Claude Quota Bar** — a SwiftUI menu bar app showing live usage. Start here. |
+| `statusline/` | The status line bridge that feeds the app for free, and its installer |
+| `claude_quota.py` | The original one-shot CLI checker (still works, see [Legacy CLI](#legacy-cli)) |
 
-  5-Hour Window:  [████████████████████████████··] 93.0%
-                  Remaining: 7.0%
-                  Resets: Sun Mar 29 03:00 AM (in 4.3 hrs)
-                  Status: allowed_warning
+## Where the numbers come from
 
-  7-Day Window:   [█████·························] 18.0%
-                  Remaining: 82.0%
-                  Resets: Sat Apr 04 12:00 PM (in 6.6 days)
-                  Status: allowed
+Anthropic has no public quota API, but there are three ways to see your rolling-window utilization. Claude Quota Bar uses the first two, in that order:
 
-  Overage:        [······························] 0.0%
-                  Status: allowed
-                  Fallback: available (50%)
-```
+1. **The status line.** Claude Code hands its `statusLine` command a JSON blob on stdin containing `rate_limits.five_hour` and `rate_limits.seven_day` — **with no network call of its own**. The bridge script caches that to disk and the app reads it. Free, instant, and refreshes on every render while you work.
+2. **The OAuth usage endpoint.** `GET https://api.anthropic.com/api/oauth/usage` — the same endpoint Claude Code's `/usage` command calls. Consumes no quota, but it's a network call against an undocumented endpoint, so the app only reaches for it when the cache has gone stale.
+3. **A real API call, to read its response headers.** What `claude_quota.py` does. It works, but it costs a (tiny) slice of the quota you're measuring, so the app doesn't do this at all.
 
-## Requirements
+The upshot: **while a Claude Code session is open, the app makes no network calls whatsoever.** Polling only kicks in to cover the gaps.
 
-- **Claude Code CLI** (`claude`) installed and logged in
-- **Python 3.7+** (no third-party dependencies -- uses only the standard library)
-- **macOS** (Claude Code uses the macOS Keychain for auth; Linux support may work if Claude Code handles auth differently there)
+## Install
 
-## Usage
+### 1. Build the app
+
+Requires macOS 13+ and the Xcode command line tools (`xcode-select --install`).
 
 ```bash
-# Pretty-printed summary
-python3 claude_quota.py
-
-# Machine-readable JSON
-python3 claude_quota.py --json
+cd menubar
+./build.sh --install     # builds, ad-hoc signs, copies to /Applications, launches
 ```
 
-### JSON output
+Drop `--install` to just build into `menubar/build/`.
 
-```json
-{
-  "status": "allowed_warning",
-  "5h-status": "allowed_warning",
-  "5h-reset": 1774778400.0,
-  "5h-utilization": 0.97,
-  "7d-status": "allowed",
-  "7d-reset": 1775329200.0,
-  "7d-utilization": 0.18,
-  "overage-status": "allowed",
-  "overage-reset": 1775001600.0,
-  "overage-utilization": 0.0,
-  "fallback-percentage": 0.5,
-  "fallback": "available",
-  "reset": 1774778400.0
-}
+### 2. Wire up the status line
+
+This is what makes the app free to run. It's optional — the app works on the OAuth fallback alone — but recommended.
+
+```bash
+cd statusline
+./install.py             # dry run: shows exactly what it will change
+./install.py --apply     # writes ~/.claude/settings.json (backs it up first)
 ```
 
-### Key fields
+**Already have a status line?** It's preserved. The installer moves your existing command into `CLAUDE_QUOTA_CHAIN`, and the bridge feeds it untouched stdin and prints its output — your status line looks identical afterwards.
 
-| Field | Description |
-|-------|-------------|
-| `5h-utilization` | 0.0 -- 1.0, how much of your rolling 5-hour window you've consumed |
-| `7d-utilization` | 0.0 -- 1.0, how much of your rolling 7-day window you've consumed |
-| `5h-reset` / `7d-reset` | Unix timestamps for when each window resets |
-| `status` | `allowed`, `allowed_warning`, or `limited` |
-| `fallback` | Whether overage/fallback capacity is `available` or `exhausted` |
-| `overage-utilization` | How much of your overage allocation you've used |
+To undo: `./install.py --apply --remove`.
 
-## How it works
+### 3. Open a Claude Code session
 
-1. Starts a tiny HTTP proxy on a random local port
-2. Runs `claude -p --model haiku "hi"` routed through the proxy via `ANTHROPIC_BASE_URL`
-3. The proxy forwards the request to `api.anthropic.com` over HTTPS
-4. Captures the `anthropic-ratelimit-unified-*` response headers
-5. Parses and displays the utilization data
+`rate_limits` only appears for Claude Pro/Max accounts, and only after the first API response in a session. Send one message and the ring lights up.
 
-The cost per check is effectively zero -- a single Haiku call with a 2-token prompt.
+## Using it
 
-## Use cases
+The menu bar shows a colored ring and percentage: green under 50%, yellow to 80%, orange to 95%, red above. It dims when the data is going stale. Click for the full breakdown — every window Anthropic reports, with a live countdown to each reset.
 
-- **End-of-day quota burning**: Check remaining quota, then fire off requests to use up what's left
-- **CI/automation gating**: Skip expensive Claude calls if quota is low
-- **Personal dashboards**: Pipe `--json` into whatever monitoring you like
-- **Cron alerts**: Get notified when you're about to hit limits
+**Settings** lets you pick which window drives the menu bar (session, weekly, or whichever is highest), the poll interval (1/5/10/30 min), whether to show the percentage text, whether to use the OAuth fallback at all, and launch-at-login.
+
+## About the OAuth fallback
+
+The fallback reads the OAuth token Claude Code already stored on your Mac and calls the usage endpoint with it. Worth knowing before you leave it on:
+
+- It is **read-only**. The app never writes, refreshes, or rotates your credential — refreshing would rotate the refresh token out from under Claude Code and could sign you out of it. If the token has expired, the app says so and waits for Claude Code to renew it.
+- It never sets `CLAUDE_CODE_OAUTH_TOKEN`, which would make Claude Code delete its Keychain entry on exit.
+- The endpoint is undocumented and rate limits without warning. The app backs off exponentially on `429`, honoring `Retry-After`.
+- **Anthropic's Consumer Terms state that OAuth credentials from a Claude subscription are for Claude Code and Claude.ai only, and not for use in other tools.** A local read of your own usage is a mild case, but it is your call — turn the fallback off in Settings and the app runs purely on the status line cache, which is entirely above board.
+
+## Legacy CLI
+
+`claude_quota.py` predates all of this. It starts a local proxy, routes one cheap Haiku call through it, and reads the `anthropic-ratelimit-unified-*` response headers. Still useful for scripting:
+
+```bash
+python3 claude_quota.py           # pretty summary
+python3 claude_quota.py --json    # machine-readable
+```
+
+It reports two things the newer sources don't: `overage-utilization` and `fallback`. But every check consumes a little quota, so prefer the app for anything continuous.
+
+## Architecture
+
+```
+Claude Code session
+  └─ statusLine command
+       └─ claude-quota-statusline.py     writes ~/.claude/quota-bar-cache.json
+            │                             (atomic: temp file + rename)
+            ▼
+       Claude Quota Bar
+            ├─ CacheFileWatcher     picks up writes instantly
+            ├─ 5-min timer          re-reads cache; polls only if stale
+            └─ OAuthUsageClient     GET /api/oauth/usage, backs off on 429
+```
+
+The bridge script never raises: a status line that throws would show an error in Claude Code on every render, and caching quota isn't worth that. If `rate_limits` is missing from a payload it leaves the previous cache untouched rather than clobbering good data with nothing.
 
 ## Limitations
 
-- Relies on undocumented response headers. Anthropic could change these at any time.
-- Each check makes one real (tiny) API call, which does consume a small amount of quota.
-- Requires Claude Code CLI to be installed and authenticated -- this is not a standalone API client.
+- `rate_limits` requires a Claude.ai Pro or Max subscription. API-key users get nothing from either source.
+- The cache goes stale when Claude Code is closed. That's what the OAuth fallback is for; without it the app shows the last known values, dimmed.
+- Both sources are undocumented or best-effort. Anthropic can change them.
+- The app is ad-hoc signed, not notarized. macOS may ask you to confirm the first launch.
 
 ## License
 
