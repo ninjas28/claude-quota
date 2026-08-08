@@ -95,6 +95,19 @@ Claude Code session
 
 The bridge script never raises: a status line that throws would show an error in Claude Code on every render, and caching quota isn't worth that. If `rate_limits` is missing from a payload it leaves the previous cache untouched rather than clobbering good data with nothing.
 
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+41 tests covering the bridge, the installer, and — most importantly — the cache
+file contract. The bridge is Python and the app that reads its output is Swift,
+so `TestSwiftContract` is the only thing checking that the two agree on field
+names and types. Swift parses the cache with `as? Double` / `as? String` casts
+that yield `nil` on a mismatch, so drift there would surface as an empty menu
+bar rather than an error.
+
 ## Limitations
 
 - `rate_limits` requires a Claude.ai Pro or Max subscription. API-key users get nothing from either source.

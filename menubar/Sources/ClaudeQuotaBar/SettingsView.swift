@@ -34,12 +34,17 @@ struct SettingsView: View {
             }
 
             if LaunchAtLogin.isAvailable {
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { newValue in
-                        if !LaunchAtLogin.set(newValue) {
-                            launchAtLogin = LaunchAtLogin.isEnabled
-                        }
+                // A custom Binding rather than .onChange: registration can fail
+                // (unsigned bundle, user restrictions), and this snaps the
+                // toggle back to the truth instead of lying about the state.
+                Toggle("Launch at login", isOn: Binding(
+                    get: { launchAtLogin },
+                    set: { newValue in
+                        launchAtLogin = LaunchAtLogin.set(newValue)
+                            ? newValue
+                            : LaunchAtLogin.isEnabled
                     }
+                ))
             }
 
             Divider()

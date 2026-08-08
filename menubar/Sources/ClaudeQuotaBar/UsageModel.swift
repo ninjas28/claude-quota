@@ -121,6 +121,14 @@ final class UsageModel: ObservableObject {
             return
         }
 
+        // Opening the popover calls refresh() from onAppear, so without this
+        // a handful of clicks would each become a request to an endpoint that
+        // rate limits hard. Anything we already hold this recent is good enough.
+        if !force, let snapshot, snapshot.age < Defaults.cacheStaleAfter {
+            lastError = nil
+            return
+        }
+
         if let backoffUntil, Date() < backoffUntil, !force {
             lastError = .rateLimited(retryAt: backoffUntil)
             return

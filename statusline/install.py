@@ -31,8 +31,16 @@ def load_settings():
         sys.exit("error: could not parse %s (%s)" % (SETTINGS, error))
 
 
-def build_command(previous):
-    """Our script, chaining to the previous status line when there was one."""
+def build_command(current):
+    """Our script, chaining to whatever status line was there before.
+
+    When we're already installed, the chained command has to be recovered from
+    the existing setting and carried forward -- otherwise a second --apply
+    replaces the wrapper with a bare invocation and silently discards the
+    user's original status line. Rebuilding this way also repairs the path if
+    the repo moved.
+    """
+    previous = unwrap(current) if current and MARKER in current else current
     if previous and MARKER not in previous:
         return "CLAUDE_QUOTA_CHAIN=%s %s" % (json.dumps(previous), SCRIPT)
     return SCRIPT

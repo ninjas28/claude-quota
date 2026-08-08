@@ -12,6 +12,14 @@ struct MenuContentView: View {
         return snapshot.age > TimeInterval(model.pollInterval) * 2
     }
 
+    /// The empty state already says everything `.noData` would, so showing both
+    /// prints the same sentence twice.
+    private var visibleError: UsageError? {
+        guard let error = model.lastError else { return nil }
+        if model.snapshot == nil && error == .noData { return nil }
+        return error
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -29,7 +37,7 @@ struct MenuContentView: View {
                 emptyState
             }
 
-            if let error = model.lastError {
+            if let error = visibleError {
                 Divider()
                 errorBanner(error)
             }

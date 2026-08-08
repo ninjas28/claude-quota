@@ -51,13 +51,22 @@ def cache_path():
     return os.path.expanduser(os.environ.get("CLAUDE_QUOTA_CACHE") or DEFAULT_CACHE)
 
 
+def as_dict(value):
+    """Nested lookups, tolerant of a field arriving as the wrong type.
+
+    `x.get("a") or {}` is not enough: a non-empty string is truthy and then
+    `.get` raises, which would blank the whole status line.
+    """
+    return value if isinstance(value, dict) else {}
+
+
 def write_cache(data):
     """Cache the rate limit windows, atomically.
 
     The menu bar app watches this path, and a rename is the only way to swap the
     contents without it ever observing a half-written file.
     """
-    rate_limits = data.get("rate_limits") or {}
+    rate_limits = as_dict(data.get("rate_limits"))
 
     windows = {}
     for key in ("five_hour", "seven_day"):
@@ -78,7 +87,7 @@ def write_cache(data):
 
     payload = dict(windows)
     payload["captured_at"] = time.time()
-    payload["model"] = (data.get("model") or {}).get("display_name")
+    payload["model"] = as_dict(data.get("model")).get("display_name")
     payload["session_id"] = data.get("session_id")
 
     target = cache_path()
@@ -105,14 +114,14 @@ def bar(percent, width=10):
 
 def default_statusline(data):
     """A compact default: model, context, and both quota windows."""
-    model = (data.get("model") or {}).get("display_name") or "Claude"
+    model = as_dict(data.get("model")).get("display_name") or "Claude"
     parts = [model]
 
-    context = (data.get("context_window") or {}).get("used_percentage")
+    context = as_dict(data.get("context_window")).get("used_percentage")
     if isinstance(context, (int, float)):
         parts.append("%s %d%% ctx" % (bar(context), int(context)))
 
-    rate_limits = data.get("rate_limits") or {}
+    rate_limits = as_dict(data.get("rate_limits"))
     quota = []
     for key, label in (("five_hour", "5h"), ("seven_day", "7d")):
         window = rate_limits.get(key)
@@ -125,7 +134,13 @@ def default_statusline(data):
 
 
 def run_chained(command, raw):
-    """Hand the original stdin to the user's existing status line command."""
+    """Hand the original stdin to the user's existing status line command.
+
+    Raises if the command fails or prints nothing, so the caller falls back to
+    our own rendering. `shell=True` does not raise on a missing command -- it
+    just exits 127 with empty output -- and returning that verbatim would leave
+    a permanently blank status line with no hint as to why.
+    """
     result = subprocess.run(
         os.path.expanduser(command),
         shell=True,
@@ -134,7 +149,10 @@ def run_chained(command, raw):
         text=True,
         timeout=5,
     )
-    return result.stdout.rstrip("\n")
+    output = result.stdout.rstrip("\n")
+    if result.returncode != 0 or not output.strip():
+        raise RuntimeError("chained status line failed (exit %d)" % result.returncode)
+    return output
 
 
 def main():
