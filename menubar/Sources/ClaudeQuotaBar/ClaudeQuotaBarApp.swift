@@ -39,14 +39,16 @@ struct ClaudeQuotaBarApp: App {
         UsageGaugeIcon.makeStatusImage(
             percentage: displayed?.window.clampedPercentage,
             stale: isStale,
-            showText: model.showPercentageText
+            showText: model.showPercentageText,
+            style: model.menuBarStyle,
+            theme: model.colorTheme
         )
     }
 
     @MainActor
     private var accessibilityLabel: String {
         guard let displayed else { return "Claude usage unavailable" }
-        return "Claude \(displayed.kind.label) usage \(Int(displayed.window.clampedPercentage.rounded())) percent"
+        return "Claude \(displayed.label) usage \(Int(displayed.window.clampedPercentage.rounded())) percent"
     }
 }
 

@@ -20,21 +20,26 @@ enum RelativeTime {
         return interval < 86_400 ? clockFormatter.string(from: date) : dayClockFormatter.string(from: date)
     }
 
-    /// A compact countdown: "4h 12m", "38m", "12s", or "now" once elapsed.
-    static func countdown(to date: Date) -> String {
-        let seconds = Int(date.timeIntervalSinceNow.rounded())
+    /// A spelled-out countdown: "3 hr 19 min", "45 min", "2 days 4 hr".
+    /// Phrased the way Claude's usage screen phrases the same thing.
+    static func longCountdown(to date: Date, from now: Date = Date()) -> String {
+        let seconds = Int(date.timeIntervalSince(now).rounded())
         guard seconds > 0 else { return "now" }
-        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 60 { return "\(seconds) sec" }
+
         let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m" }
+        if minutes < 60 { return "\(minutes) min" }
+
         let hours = minutes / 60
         if hours < 24 {
             let remainder = minutes % 60
-            return remainder == 0 ? "\(hours)h" : "\(hours)h \(remainder)m"
+            return remainder == 0 ? "\(hours) hr" : "\(hours) hr \(remainder) min"
         }
+
         let days = hours / 24
         let remainder = hours % 24
-        return remainder == 0 ? "\(days)d" : "\(days)d \(remainder)h"
+        let dayLabel = days == 1 ? "1 day" : "\(days) days"
+        return remainder == 0 ? dayLabel : "\(dayLabel) \(remainder) hr"
     }
 
     /// How long ago a snapshot was captured: "just now", "4m ago", "2h ago".

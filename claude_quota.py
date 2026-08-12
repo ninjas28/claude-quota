@@ -13,12 +13,15 @@ Usage:
 Requires:
     - Claude Code CLI (`claude`) installed and logged in
     - macOS (uses security keychain for Claude Code auth)
+
+Note: these headers report utilization as a 0-1 fraction. The OAuth usage
+endpoint the menu bar app uses reports the same numbers as 0-100 percentages.
+Same data, different scale -- don't mix them up.
 """
 
 import http.server
 import json
 import os
-import socket
 import subprocess
 import sys
 import threading
@@ -28,19 +31,32 @@ from http.client import HTTPSConnection
 
 ANTHROPIC_API_HOST = "api.anthropic.com"
 RATE_LIMIT_PREFIX = "anthropic-ratelimit-unified-"
+UPSTREAM_TIMEOUT = 30
 
-
-def find_free_port():
-    """Find a free port on localhost."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+# Headers that describe a single connection and must not be relayed.
+# Transfer-Encoding matters most here: http.client strips chunk framing before
+# we ever see the body, so forwarding the header would tell our client to
+# de-chunk a stream that has already been de-chunked.
+HOP_BY_HOP_HEADERS = frozenset({
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+})
 
 
 class HeaderCapturingHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP proxy handler that forwards to Anthropic and captures rate-limit headers."""
+    """HTTP proxy handler that forwards to Anthropic and captures rate-limit headers.
 
-    captured_headers = {}
+    Captured headers live on the *server* instance, not on the class. A class
+    attribute survives for the life of the process, so a second check would see
+    the first one's numbers and a failed check would quietly report stale data
+    instead of raising.
+    """
 
     def log_message(self, format_string, *args):
         pass  # Silence request logging
@@ -49,105 +65,147 @@ class HeaderCapturingHandler(http.server.BaseHTTPRequestHandler):
         try:
             super().handle()
         except ConnectionResetError:
-            pass  # Expected when --bare fallback retries
+            pass  # Expected when the client gives up mid-request
 
     def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length)
+        self.forward()
 
-        # Forward to Anthropic over HTTPS
-        connection = HTTPSConnection(ANTHROPIC_API_HOST, 443)
-        forward_headers = {}
-        for key, value in self.headers.items():
-            lower_key = key.lower()
-            if lower_key not in ("host", "connection", "transfer-encoding"):
-                forward_headers[key] = value
-        forward_headers["Host"] = ANTHROPIC_API_HOST
+    def do_GET(self):
+        self.forward()
 
-        connection.request("POST", self.path, body=body, headers=forward_headers)
-        response = connection.getresponse()
+    def forward(self):
+        """Relay one request upstream, recording any rate-limit headers."""
+        responded = False
+        try:
+            content_length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(content_length) if content_length else None
 
-        # Capture rate-limit headers
-        for key, value in response.getheaders():
-            if RATE_LIMIT_PREFIX in key.lower():
-                clean_key = key.lower().replace(RATE_LIMIT_PREFIX, "")
+            forward_headers = {
+                key: value
+                for key, value in self.headers.items()
+                if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
+            }
+            forward_headers["Host"] = ANTHROPIC_API_HOST
+
+            connection = HTTPSConnection(
+                ANTHROPIC_API_HOST, 443, timeout=UPSTREAM_TIMEOUT
+            )
+            try:
+                connection.request(self.command, self.path, body=body, headers=forward_headers)
+                response = connection.getresponse()
+
+                self.capture(response.getheaders())
+
+                self.send_response(response.status)
+                for key, value in response.getheaders():
+                    if key.lower() not in HOP_BY_HOP_HEADERS:
+                        self.send_header(key, value)
+                self.end_headers()
+                responded = True
+
+                while True:
+                    chunk = response.read(8192)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            finally:
+                connection.close()
+
+        except Exception as error:
+            # Without this the handler thread dies and Claude Code sees a
+            # dropped socket, which surfaces as a confusing generic failure.
+            if not responded:
                 try:
-                    HeaderCapturingHandler.captured_headers[clean_key] = float(value)
-                except ValueError:
-                    HeaderCapturingHandler.captured_headers[clean_key] = value
+                    self.send_error(502, "proxy error: %s" % error)
+                except Exception:
+                    pass
 
-        # Forward response back to Claude Code
-        self.send_response(response.status)
-        for key, value in response.getheaders():
-            self.send_header(key, value)
-        self.end_headers()
+    def capture(self, headers):
+        captured = self.server.captured_headers
+        for key, value in headers:
+            lower_key = key.lower()
+            if not lower_key.startswith(RATE_LIMIT_PREFIX):
+                continue
+            clean_key = lower_key[len(RATE_LIMIT_PREFIX):]
+            try:
+                captured[clean_key] = float(value)
+            except ValueError:
+                captured[clean_key] = value
 
-        # Stream the response body through
-        while True:
-            chunk = response.read(8192)
-            if not chunk:
-                break
-            self.wfile.write(chunk)
 
-        connection.close()
+class CapturingProxy(http.server.HTTPServer):
+    """An HTTPServer that owns the headers its handlers capture."""
+
+    def __init__(self):
+        # Bind port 0 and read back what the OS gave us. Picking a free port in
+        # a separate socket and reopening it leaves a window for something else
+        # to take it first.
+        super().__init__(("127.0.0.1", 0), HeaderCapturingHandler)
+        self.captured_headers = {}
+
+    @property
+    def base_url(self):
+        return "http://127.0.0.1:%d" % self.server_address[1]
+
+
+def claude_command(bare):
+    command = [
+        "claude",
+        "-p",
+        "--output-format", "json",
+        "--tools", "",
+        "--model", "haiku",
+        "--no-session-persistence",
+    ]
+    if bare:
+        command.append("--bare")
+    command.append("hi")
+    return command
 
 
 def check_quota():
     """Start a proxy, run a minimal claude call through it, return rate-limit data."""
-    port = find_free_port()
-    server = http.server.HTTPServer(("127.0.0.1", port), HeaderCapturingHandler)
+    server = CapturingProxy()
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
     try:
+        environment = {**os.environ, "ANTHROPIC_BASE_URL": server.base_url}
         result = subprocess.run(
-            [
-                "claude",
-                "-p",
-                "--output-format", "json",
-                "--tools", "",
-                "--model", "haiku",
-                "--no-session-persistence",
-                "--bare",
-                "hi",
-            ],
+            claude_command(bare=True),
             capture_output=True,
             text=True,
             timeout=30,
-            env={**os.environ, "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}"},
+            env=environment,
         )
 
-        if result.returncode != 0:
-            # --bare skips OAuth — fall back without it
+        # Only retry if the fast path produced nothing. `--bare` skips some
+        # startup work and can exit non-zero after the request already went
+        # through -- retrying on the exit code alone spends a second slice of
+        # the quota we're here to measure.
+        if result.returncode != 0 and not server.captured_headers:
             result = subprocess.run(
-                [
-                    "claude",
-                    "-p",
-                    "--output-format", "json",
-                    "--tools", "",
-                    "--model", "haiku",
-                    "--no-session-persistence",
-                    "hi",
-                ],
+                claude_command(bare=False),
                 capture_output=True,
                 text=True,
                 timeout=60,
-                env={**os.environ, "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}"},
+                env=environment,
             )
 
-        if not HeaderCapturingHandler.captured_headers:
+        if not server.captured_headers:
             stderr_output = result.stderr.strip()
             stdout_output = result.stdout.strip()
             error_detail = stderr_output or stdout_output or "no output"
             raise RuntimeError(
-                f"No rate-limit headers captured. Claude exit code: {result.returncode}. "
-                f"Detail: {error_detail[:200]}"
+                "No rate-limit headers captured. Claude exit code: %d. Detail: %s"
+                % (result.returncode, error_detail[:200])
             )
 
-        return HeaderCapturingHandler.captured_headers
+        return server.captured_headers
 
     finally:
         server.shutdown()
+        server.server_close()
 
 
 def format_timestamp(epoch_seconds):
@@ -168,53 +226,68 @@ def format_timestamp(epoch_seconds):
         return f"{dt.strftime('%a %b %d %I:%M %p')} (in {days:.1f} days)"
 
 
+def bar(percent, width=30):
+    filled = int(max(0.0, min(100.0, percent)) / 100 * width)
+    return f"[{'█' * filled}{'·' * (width - filled)}]"
+
+
+def print_window(title, data, prefix):
+    """One rolling window, if the response described it."""
+    utilization = data.get("%s-utilization" % prefix)
+    if not isinstance(utilization, (int, float)):
+        return
+
+    percent = utilization * 100
+    print(f"  {title:<15} {bar(percent)} {percent:.1f}%")
+    print(f"                  Remaining: {max(0.0, 100 - percent):.1f}%")
+
+    reset = data.get("%s-reset" % prefix)
+    if isinstance(reset, (int, float)) and reset:
+        print(f"                  Resets: {format_timestamp(reset)}")
+    print(f"                  Status: {data.get('%s-status' % prefix, 'unknown')}")
+    print()
+
+
 def print_summary(data):
-    """Print a human-readable quota summary."""
-    five_hour_utilization = data.get("5h-utilization", 0)
-    seven_day_utilization = data.get("7d-utilization", 0)
-    overage_utilization = data.get("overage-utilization", 0)
+    """Print a human-readable quota summary.
 
-    five_hour_reset = data.get("5h-reset", 0)
-    seven_day_reset = data.get("7d-reset", 0)
-
-    five_hour_status = data.get("5h-status", "unknown")
-    seven_day_status = data.get("7d-status", "unknown")
-    overage_status = data.get("overage-status", "unknown")
-    fallback = data.get("fallback", "unknown")
-    fallback_percentage = data.get("fallback-percentage", 0)
-
-    five_hour_percent = five_hour_utilization * 100
-    seven_day_percent = seven_day_utilization * 100
-    overage_percent = overage_utilization * 100
-    five_hour_remaining = max(0, (1 - five_hour_utilization)) * 100
-    seven_day_remaining = max(0, (1 - seven_day_utilization)) * 100
-
-    def bar(percent, width=30):
-        filled = int(percent / 100 * width)
-        return f"[{'█' * filled}{'·' * (width - filled)}]"
-
+    Every field is optional. Anthropic has already dropped `fallback` and
+    `overage-utilization` and added `overage-disabled-reason` and
+    `representative-claim` since this script was written, so print what came
+    back rather than asserting a fixed shape.
+    """
     print()
     print("  Claude Max Quota")
     print("  " + "=" * 48)
     print()
-    print(f"  5-Hour Window:  {bar(five_hour_percent)} {five_hour_percent:.1f}%")
-    print(f"                  Remaining: {five_hour_remaining:.1f}%")
-    if five_hour_reset:
-        print(f"                  Resets: {format_timestamp(five_hour_reset)}")
-    print(f"                  Status: {five_hour_status}")
-    print()
-    print(f"  7-Day Window:   {bar(seven_day_percent)} {seven_day_percent:.1f}%")
-    print(f"                  Remaining: {seven_day_remaining:.1f}%")
-    if seven_day_reset:
-        print(f"                  Resets: {format_timestamp(seven_day_reset)}")
-    print(f"                  Status: {seven_day_status}")
-    print()
-    print(f"  Overage:        {bar(overage_percent)} {overage_percent:.1f}%")
-    print(f"                  Status: {overage_status}")
-    if isinstance(fallback_percentage, (int, float)):
-        print(f"                  Fallback: {fallback} ({fallback_percentage * 100:.0f}%)")
+
+    print_window("5-Hour Window:", data, "5h")
+    print_window("7-Day Window:", data, "7d")
+
+    overage_utilization = data.get("overage-utilization")
+    if isinstance(overage_utilization, (int, float)):
+        overage_percent = overage_utilization * 100
+        print(f"  {'Overage:':<15} {bar(overage_percent)} {overage_percent:.1f}%")
+        print(f"                  Status: {data.get('overage-status', 'unknown')}")
     else:
+        print(f"  {'Overage:':<15} Status: {data.get('overage-status', 'unknown')}")
+
+    disabled_reason = data.get("overage-disabled-reason")
+    if disabled_reason:
+        print(f"                  Reason: {disabled_reason}")
+
+    fallback = data.get("fallback")
+    fallback_percentage = data.get("fallback-percentage")
+    if fallback and isinstance(fallback_percentage, (int, float)):
+        print(f"                  Fallback: {fallback} ({fallback_percentage * 100:.0f}%)")
+    elif fallback:
         print(f"                  Fallback: {fallback}")
+    elif isinstance(fallback_percentage, (int, float)):
+        print(f"                  Fallback: {fallback_percentage * 100:.0f}%")
+
+    representative = data.get("representative-claim")
+    if representative:
+        print(f"                  Binding window: {representative}")
     print()
 
 

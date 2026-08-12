@@ -1,6 +1,6 @@
 import Foundation
 
-/// Reads the cache file written by `claude-quota-statusline.sh`.
+/// Reads the cache file written by `statusline/claude-quota-statusline.py`.
 ///
 /// Claude Code hands `rate_limits` to the status line command on stdin with no
 /// network call of its own, so this path is free, instant, and refreshes on
@@ -32,13 +32,17 @@ enum StatusLineCache {
             (.sevenDay, "seven_day")
         ]
 
-        var windows: [UsageWindowKind: UsageWindow] = [:]
-        for (kind, key) in keys {
+        let windows: [UsageEntry] = keys.compactMap { kind, key in
             guard let object = root[key] as? [String: Any],
-                  let used = object["used_percentage"] as? Double else { continue }
-            windows[kind] = UsageWindow(
-                usedPercentage: used,
-                resetsAt: OAuthUsageClient.decodeDate(object["resets_at"])
+                  let used = OAuthUsageClient.decodeNumber(object["used_percentage"]) else {
+                return nil
+            }
+            return UsageEntry(
+                kind: kind,
+                window: UsageWindow(
+                    usedPercentage: used,
+                    resetsAt: OAuthUsageClient.decodeDate(object["resets_at"])
+                )
             )
         }
 

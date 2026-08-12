@@ -1,28 +1,74 @@
 import AppKit
 import SwiftUI
 
-/// Shared colour ramp so the menu bar ring and the popover bars always agree.
+/// Shared colour rules so the menu bar indicator and the popover bars always
+/// agree. Every colour in the app comes from here.
 enum UsageColor {
-    static func level(_ percentage: Double) -> (nsColor: NSColor, color: Color) {
-        switch percentage {
-        case ..<50: return (.systemGreen, .green)
-        case ..<80: return (.systemYellow, .yellow)
-        case ..<95: return (.systemOrange, .orange)
-        default: return (.systemRed, .red)
+    /// Claude's usage-screen blue. Fixed rather than `controlAccentColor`: it
+    /// is meant to look like Claude, not like whatever accent the user picked.
+    /// Saturated enough to hold up on both light and dark menu bars.
+    static let claudeBlue = NSColor(srgbRed: 0.243, green: 0.388, blue: 0.867, alpha: 1)
+
+    static func nsColor(_ percentage: Double, theme: ColorTheme) -> NSColor {
+        switch theme {
+        case .claude:
+            return claudeBlue
+        case .usage:
+            switch percentage {
+            case ..<50: return .systemGreen
+            case ..<80: return .systemYellow
+            case ..<95: return .systemOrange
+            default: return .systemRed
+            }
         }
     }
 
-    static func nsColor(_ percentage: Double) -> NSColor { level(percentage).nsColor }
-    static func color(_ percentage: Double) -> Color { level(percentage).color }
+    static func color(_ percentage: Double, theme: ColorTheme) -> Color {
+        Color(nsColor: nsColor(percentage, theme: theme))
+    }
+
+    /// Neutral track for a window nothing has touched.
+    static let emptyTrack = Color.primary.opacity(0.13)
+
+    /// The unfilled remainder of a bar.
+    ///
+    /// Tinted with the fill colour, dropping to neutral grey when the window is
+    /// untouched — that contrast is what makes an unused row read as "nothing
+    /// here" rather than "something, very small".
+    ///
+    /// Both themes tint. An earlier version left the usage ramp's track a flat
+    /// `primary.opacity(0.12)`, which put it within a hair of the empty grey:
+    /// on a dark background a 2% row and a 0% row were the same picture.
+    static func trackColor(_ percentage: Double, theme: ColorTheme) -> Color {
+        guard percentage > 0 else { return emptyTrack }
+        return color(percentage, theme: theme).opacity(0.24)
+    }
 }
 
-/// Draws the little ring shown in the menu bar.
+/// Draws the menu bar indicator.
 ///
 /// Deliberately Core Graphics rather than a SwiftUI view: `MenuBarExtra` only
 /// renders `Text` and `Image` reliably in its label, so we hand it a finished
 /// bitmap. `isTemplate` stays off because the fill colour carries meaning.
 enum UsageGaugeIcon {
-    static func make(percentage: Double?, stale: Bool) -> NSImage {
+    static func make(
+        percentage: Double?,
+        stale: Bool,
+        style: MenuBarStyle,
+        theme: ColorTheme
+    ) -> NSImage {
+        switch style {
+        case .ring: return ring(percentage: percentage, stale: stale, theme: theme)
+        case .bar: return bar(percentage: percentage, stale: stale, theme: theme)
+        }
+    }
+
+    private static func fill(_ clamped: Double, stale: Bool, theme: ColorTheme) -> NSColor {
+        let color = UsageColor.nsColor(clamped, theme: theme)
+        return stale ? color.withAlphaComponent(0.45) : color
+    }
+
+    private static func ring(percentage: Double?, stale: Bool, theme: ColorTheme) -> NSImage {
         let size = NSSize(width: 16, height: 16)
         let image = NSImage(size: size, flipped: false) { rect in
             let center = CGPoint(x: rect.midX, y: rect.midY)
@@ -63,10 +109,49 @@ enum UsageGaugeIcon {
             )
             progress.lineWidth = lineWidth
             progress.lineCapStyle = .round
-
-            let color = UsageColor.nsColor(clamped)
-            (stale ? color.withAlphaComponent(0.45) : color).setStroke()
+            fill(clamped, stale: stale, theme: theme).setStroke()
             progress.stroke()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
+    /// The capsule from Claude's usage screen, shrunk to menu bar size.
+    private static func bar(percentage: Double?, stale: Bool, theme: ColorTheme) -> NSImage {
+        let size = NSSize(width: 24, height: 16)
+        let height: CGFloat = 6
+
+        let image = NSImage(size: size, flipped: false) { rect in
+            let track = NSRect(
+                x: 0,
+                y: (rect.height - height) / 2,
+                width: rect.width,
+                height: height
+            )
+            let radius = height / 2
+
+            let clamped = percentage.map { min(max($0, 0), 100) }
+            let trackColor: NSColor = {
+                guard let clamped, clamped > 0 else { return .tertiaryLabelColor }
+                switch theme {
+                case .claude: return UsageColor.nsColor(clamped, theme: theme).withAlphaComponent(0.28)
+                case .usage: return .tertiaryLabelColor
+                }
+            }()
+            NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius).fill(
+                with: trackColor
+            )
+
+            guard let clamped, clamped > 0 else { return true }
+
+            // Never let a non-zero reading round away to an invisible sliver —
+            // a bar that looks empty at 2% is worse than one that overstates it.
+            let width = max(height, track.width * CGFloat(clamped / 100))
+            let filled = NSRect(x: track.minX, y: track.minY, width: width, height: height)
+            NSBezierPath(roundedRect: filled, xRadius: radius, yRadius: radius).fill(
+                with: fill(clamped, stale: stale, theme: theme)
+            )
             return true
         }
         image.isTemplate = false
@@ -74,15 +159,28 @@ enum UsageGaugeIcon {
     }
 }
 
+private extension NSBezierPath {
+    func fill(with color: NSColor) {
+        color.setFill()
+        fill()
+    }
+}
+
 extension UsageGaugeIcon {
-    /// Ring plus percentage baked into one image.
+    /// Indicator plus percentage baked into one image.
     ///
     /// `MenuBarExtra` labels only render `Text` and `Image` dependably on
     /// macOS 13 — an `HStack` of both can silently drop an element — so the
     /// whole label is drawn once here and handed over as a single `Image`.
-    static func makeStatusImage(percentage: Double?, stale: Bool, showText: Bool) -> NSImage {
-        let ring = make(percentage: percentage, stale: stale)
-        guard showText else { return ring }
+    static func makeStatusImage(
+        percentage: Double?,
+        stale: Bool,
+        showText: Bool,
+        style: MenuBarStyle,
+        theme: ColorTheme
+    ) -> NSImage {
+        let indicator = make(percentage: percentage, stale: stale, style: style, theme: theme)
+        guard showText else { return indicator }
 
         let text = percentage.map { "\(Int(min(max($0, 0), 100).rounded()))%" } ?? "--"
         let attributes: [NSAttributedString.Key: Any] = [
@@ -94,22 +192,22 @@ extension UsageGaugeIcon {
 
         let spacing: CGFloat = 3
         let totalSize = NSSize(
-            width: ring.size.width + spacing + ceil(textSize.width),
-            height: max(ring.size.height, ceil(textSize.height))
+            width: indicator.size.width + spacing + ceil(textSize.width),
+            height: max(indicator.size.height, ceil(textSize.height))
         )
 
         let composed = NSImage(size: totalSize, flipped: false) { rect in
-            ring.draw(
+            indicator.draw(
                 in: NSRect(
                     x: 0,
-                    y: (rect.height - ring.size.height) / 2,
-                    width: ring.size.width,
-                    height: ring.size.height
+                    y: (rect.height - indicator.size.height) / 2,
+                    width: indicator.size.width,
+                    height: indicator.size.height
                 )
             )
             attributed.draw(
                 at: NSPoint(
-                    x: ring.size.width + spacing,
+                    x: indicator.size.width + spacing,
                     y: (rect.height - textSize.height) / 2
                 )
             )
@@ -120,22 +218,34 @@ extension UsageGaugeIcon {
     }
 }
 
-/// Horizontal progress bar used in the popover rows.
+/// The capsule bar used in the popover rows.
 struct UsageBar: View {
     var percentage: Double
     var stale: Bool
+    var theme: ColorTheme
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.primary.opacity(0.12))
-                Capsule()
-                    .fill(UsageColor.color(percentage).opacity(stale ? 0.45 : 1))
-                    .frame(width: max(0, min(1, percentage / 100)) * geometry.size.width)
+                    .fill(UsageColor.trackColor(percentage, theme: theme))
+                if percentage > 0 {
+                    Capsule()
+                        .fill(UsageColor.color(percentage, theme: theme).opacity(stale ? 0.45 : 1))
+                        .frame(
+                            width: max(
+                                Layout.barHeight,
+                                min(1, percentage / 100) * geometry.size.width
+                            )
+                        )
+                }
             }
         }
-        .frame(height: 6)
+        .frame(height: Layout.barHeight)
         .accessibilityLabel(Text("\(Int(percentage.rounded())) percent used"))
+    }
+
+    enum Layout {
+        static let barHeight: CGFloat = 7
     }
 }

@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 #
-# Builds Claude Quota Bar and assembles it into a .app bundle.
+# Builds Claude Quota Bar into ./build/Claude Quota Bar.app.
 #
-#   ./build.sh              build into ./build/Claude Quota Bar.app
-#   ./build.sh --install    also copy it into /Applications and launch it
-#
-# Requires Xcode command line tools (`xcode-select --install`) and macOS 13+.
+# Installing is ../install.sh's job. This only ever builds.
 
 set -euo pipefail
 
@@ -41,15 +38,9 @@ printf 'APPL????' > "$APP_BUNDLE/Contents/PkgInfo"
 
 # Ad-hoc signature. Unsigned menu bar apps get killed by Gatekeeper on launch,
 # and SMAppService (launch at login) refuses to register without any signature.
+# No --deep: Apple deprecated it, and there is nothing nested to sign here —
+# the bundle is a single binary.
 echo "==> Signing (ad-hoc)"
-codesign --force --deep --sign - "$APP_BUNDLE"
+codesign --force --sign - "$APP_BUNDLE"
 
 echo "==> Built: $APP_BUNDLE"
-
-if [[ "${1:-}" == "--install" ]]; then
-    echo "==> Installing to /Applications"
-    rm -rf "/Applications/$APP_NAME.app"
-    cp -R "$APP_BUNDLE" "/Applications/$APP_NAME.app"
-    open "/Applications/$APP_NAME.app"
-    echo "==> Launched. Look for the ring in your menu bar."
-fi

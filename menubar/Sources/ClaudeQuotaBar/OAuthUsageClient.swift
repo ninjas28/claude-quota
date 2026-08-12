@@ -52,9 +52,13 @@ struct OAuthUsageClient {
 
         switch http.statusCode {
         case 200:
-            guard let snapshot = Self.parse(data) else {
+            guard var snapshot = Self.parse(data) else {
                 throw Failure.transport(.noData)
             }
+            // The plan badge isn't in the payload — it rides on the credential
+            // we just used, so stamp it here rather than reading the Keychain
+            // a second time from the view.
+            snapshot.plan = credentials.planLabel
             return snapshot
         case 401, 403:
             throw Failure.credentials(.credentialsExpired)
@@ -86,23 +90,14 @@ struct OAuthUsageClient {
             return nil
         }
 
-        let keys: [(UsageWindowKind, String)] = [
-            (.fiveHour, "five_hour"),
-            (.sevenDay, "seven_day"),
-            (.sevenDayOpus, "seven_day_opus"),
-            (.sevenDaySonnet, "seven_day_sonnet")
-        ]
-
-        var windows: [UsageWindowKind: UsageWindow] = [:]
-        for (kind, key) in keys {
-            guard let object = root[key] as? [String: Any],
-                  let utilization = object["utilization"] as? Double else { continue }
-            windows[kind] = UsageWindow(
-                usedPercentage: utilization,
-                resetsAt: decodeDate(object["resets_at"])
-            )
+        // Prefer the `limits` array. It is self-describing (kind, percent,
+        // scope) and it is the only place a model-scoped weekly window shows
+        // up. The top-level keys are the fallback for accounts that don't
+        // report one.
+        var windows = parseLimits(root["limits"])
+        if windows.isEmpty {
+            windows = parseTopLevelWindows(root)
         }
-
         guard !windows.isEmpty else { return nil }
 
         let extraUsage = root["extra_usage"] as? [String: Any]
@@ -114,10 +109,76 @@ struct OAuthUsageClient {
         )
     }
 
+    /// `kind` values we know how to display. Anything else (the endpoint also
+    /// reports several internal buckets) is skipped rather than guessed at.
+    private static let limitKinds: [String: UsageWindowKind] = [
+        "session": .fiveHour,
+        "weekly_all": .sevenDay,
+        "weekly_scoped": .weeklyScoped
+    ]
+
+    static func parseLimits(_ value: Any?) -> [UsageEntry] {
+        guard let entries = value as? [[String: Any]] else { return [] }
+        return entries.compactMap { entry in
+            guard let kindName = entry["kind"] as? String,
+                  let kind = limitKinds[kindName],
+                  let percent = decodeNumber(entry["percent"]) else { return nil }
+            let model = (entry["scope"] as? [String: Any])?["model"] as? [String: Any]
+            return UsageEntry(
+                kind: kind,
+                window: UsageWindow(
+                    usedPercentage: percent,
+                    resetsAt: decodeDate(entry["resets_at"]),
+                    scopeLabel: model?["display_name"] as? String
+                )
+            )
+        }
+    }
+
+    /// The per-key shape, for accounts that report no `limits` array. Still
+    /// live data, unlike the `seven_day_opus` / `seven_day_sonnet` keys that
+    /// used to be read here: those come back null now that scoped windows
+    /// arrive through `limits`.
+    static func parseTopLevelWindows(_ root: [String: Any]) -> [UsageEntry] {
+        let keys: [(UsageWindowKind, String)] = [
+            (.fiveHour, "five_hour"),
+            (.sevenDay, "seven_day")
+        ]
+        return keys.compactMap { kind, key in
+            guard let object = root[key] as? [String: Any],
+                  let utilization = decodeNumber(object["utilization"]) else { return nil }
+            return UsageEntry(
+                kind: kind,
+                window: UsageWindow(
+                    usedPercentage: utilization,
+                    resetsAt: decodeDate(object["resets_at"])
+                )
+            )
+        }
+    }
+
+    /// JSON numbers arrive as `NSNumber`, and `percent` is an integer while
+    /// `utilization` is a real. Accept either rather than depending on how
+    /// Foundation happens to bridge a given literal.
+    static func decodeNumber(_ value: Any?) -> Double? {
+        guard let value else { return nil }
+        if let number = value as? NSNumber {
+            // Booleans bridge to NSNumber — but so do the literals 0 and 1, and
+            // `number is Bool` is true for all four. Testing the CoreFoundation
+            // type is the only way to tell a real boolean from the number 1.
+            // Getting this wrong silently drops any window sitting at 0% or 1%.
+            guard CFGetTypeID(number as CFTypeRef) != CFBooleanGetTypeID() else { return nil }
+            return number.doubleValue
+        }
+        if let double = value as? Double { return double }
+        if let integer = value as? Int { return Double(integer) }
+        return nil
+    }
+
     /// `resets_at` comes back as an ISO-8601 string here and as epoch seconds in
     /// the status line payload, so accept either.
     static func decodeDate(_ value: Any?) -> Date? {
-        if let seconds = value as? Double, seconds > 0 {
+        if let seconds = decodeNumber(value), seconds > 0 {
             return Date(timeIntervalSince1970: seconds)
         }
         guard let string = value as? String, !string.isEmpty else { return nil }

@@ -11,6 +11,8 @@ checks that the two agree on field names and types.
 
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -21,6 +23,22 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BRIDGE = os.path.join(REPO, "statusline", "claude-quota-statusline.py")
 INSTALLER = os.path.join(REPO, "statusline", "install.py")
+CACHE_READER = os.path.join(
+    REPO, "menubar", "Sources", "ClaudeQuotaBar", "StatusLineCache.swift"
+)
+
+
+def swift_cache_keys():
+    """Every JSON key StatusLineCache.swift actually looks up.
+
+    Two shapes appear in that file: direct subscripts, `root["model"]` and
+    `object["used_percentage"]`, and the window table, `(.fiveHour, "five_hour")`.
+    """
+    with open(CACHE_READER) as file:
+        source = file.read()
+    subscripts = set(re.findall(r'(?:root|object)\["([a-z_]+)"\]', source))
+    window_keys = set(re.findall(r'\(\.\w+,\s*"([a-z_]+)"\)', source))
+    return subscripts | window_keys
 
 
 def run_bridge(payload, cache_path, env=None, raw=None):
@@ -253,17 +271,30 @@ class TestAtomicity(CacheTempDir):
 class TestSwiftContract(CacheTempDir):
     """Locks the cache format to what StatusLineCache.swift actually parses.
 
-    Swift reads these with `as? Double` / `as? String` casts that silently
-    yield nil on a type mismatch, so a rename or type drift here would show up
-    as an empty menu bar rather than an error. These assertions are the only
-    thing standing between the two languages.
+    Swift reads these with casts that silently yield nil on a mismatch, so a
+    rename or type drift would show up as an empty menu bar rather than an
+    error. The Swift half of this contract lives in
+    `menubar/Tests/ClaudeQuotaBarTests/StatusLineCacheTests.swift`, which pins
+    what Swift reads; this class pins what Python writes, and
+    `test_key_names_match_the_swift_source` compares the two directly.
     """
 
-    #  Swift side, for reference:
-    #    object["used_percentage"] as? Double
-    #    OAuthUsageClient.decodeDate(object["resets_at"])   // Double or ISO string
-    #    root["model"] as? String, root["session_id"] as? String
-    #    OAuthUsageClient.decodeDate(root["captured_at"])
+    def test_swift_source_is_where_we_think_it_is(self):
+        """Guards the test below: a moved file would otherwise make it pass
+        vacuously by comparing against an empty key set."""
+        self.assertTrue(os.path.exists(CACHE_READER), CACHE_READER)
+        self.assertTrue(swift_cache_keys(), "parsed no keys out of the Swift source")
+
+    def test_key_names_match_the_swift_source(self):
+        """The real cross-language check: every key the bridge writes is one
+        Swift looks up, and vice versa. Catches a rename on either side."""
+        run_bridge(full_payload(), self.cache)
+        cache = self.read_cache()
+        written = set(cache)
+        for window in ("five_hour", "seven_day"):
+            written |= set(cache[window])
+        self.assertEqual(written, swift_cache_keys())
+
     def test_top_level_keys_are_exactly_what_swift_reads(self):
         run_bridge(full_payload(), self.cache)
         cache = self.read_cache()
@@ -412,6 +443,84 @@ class TestInstaller(unittest.TestCase):
             file.write("{ this is not json")
         result = self.run_installer("--apply")
         self.assertNotEqual(result.returncode, 0)
+
+
+class TestInstallerQuoting(unittest.TestCase):
+    """Claude Code runs `statusLine.command` through a shell, so both halves of
+    the generated command have to survive that shell intact."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.home, ".claude"))
+        self.cache = os.path.join(self.home, "cache.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    @property
+    def settings_path(self):
+        return os.path.join(self.home, ".claude", "settings.json")
+
+    def write_settings(self, data):
+        with open(self.settings_path, "w") as file:
+            json.dump(data, file)
+
+    def installed_command(self):
+        with open(self.settings_path) as file:
+            return json.load(file)["statusLine"]["command"]
+
+    def install(self, installer=INSTALLER):
+        environment = dict(os.environ)
+        environment["HOME"] = self.home
+        result = subprocess.run(
+            [sys.executable, installer, "--apply"],
+            capture_output=True, text=True, env=environment, timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        return result
+
+    def test_script_path_with_spaces_still_runs(self):
+        """A repo checked out under `~/My Projects` produced a command the
+        shell split in half."""
+        spaced = os.path.join(self.home, "my status line")
+        shutil.copytree(os.path.join(REPO, "statusline"), spaced)
+        os.chmod(os.path.join(spaced, "claude-quota-statusline.py"), 0o755)
+
+        self.install(os.path.join(spaced, "install.py"))
+
+        environment = dict(os.environ)
+        environment["HOME"] = self.home
+        environment["CLAUDE_QUOTA_CACHE"] = self.cache
+        result = subprocess.run(
+            self.installed_command(),
+            shell=True, input=json.dumps(full_payload()),
+            capture_output=True, text=True, env=environment, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Opus 5", result.stdout)
+        self.assertTrue(os.path.exists(self.cache))
+
+    def test_previous_command_reaches_the_bridge_unexpanded(self):
+        """The chained command must arrive as literal text. Double-quoting it
+        let the outer shell expand `$VARS` and backticks first, so the bridge
+        ran something the user never wrote."""
+        original = 'my-line.sh "$SENTINEL" `hostname`'
+        self.write_settings({"statusLine": {"type": "command", "command": original}})
+        self.install()
+
+        # Swap our script for a probe that just reports what the shell set, so
+        # this measures the outer shell only.
+        probe = "%s -c 'import os,sys; sys.stdout.write(os.environ[\"CLAUDE_QUOTA_CHAIN\"])'" % (
+            shlex.quote(sys.executable)
+        )
+        command = self.installed_command().replace(shlex.quote(BRIDGE), probe)
+
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=15,
+            env={"SENTINEL": "EXPANDED", "PATH": os.environ["PATH"]},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, original)
 
 
 if __name__ == "__main__":

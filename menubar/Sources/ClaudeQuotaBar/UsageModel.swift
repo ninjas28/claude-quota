@@ -34,27 +34,60 @@ final class UsageModel: ObservableObject {
     @Published var showPercentageText: Bool {
         didSet { defaults.set(showPercentageText, forKey: SettingsKey.showPercentageText) }
     }
+    @Published var menuBarStyle: MenuBarStyle {
+        didSet { defaults.set(menuBarStyle.rawValue, forKey: SettingsKey.menuBarStyle) }
+    }
+    @Published var colorTheme: ColorTheme {
+        didSet { defaults.set(colorTheme.rawValue, forKey: SettingsKey.colorTheme) }
+    }
 
     private let defaults: UserDefaults
 
-    // `nonisolated` so `shared` can be built from a static initializer without
-    // hopping to the main actor. Safe: it only assigns stored properties, and
-    // `didSet` observers don't fire during init.
-    nonisolated init(defaults: UserDefaults = .standard) {
+    // Main-actor isolated, like the rest of the class. A `nonisolated` init
+    // can't work here: every setting below has a `didSet`, which makes the
+    // compiler treat the assignment as a mutation of isolated state rather
+    // than an initialization. `shared` is a static on a @MainActor type and
+    // every caller is already on the main actor, so there is no hop to avoid.
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [
             SettingsKey.pollInterval: PollInterval.default,
             SettingsKey.barDisplayMode: BarDisplayMode.session.rawValue,
             SettingsKey.oauthFallbackEnabled: true,
-            SettingsKey.showPercentageText: true
+            SettingsKey.showPercentageText: true,
+            SettingsKey.menuBarStyle: MenuBarStyle.ring.rawValue,
+            SettingsKey.colorTheme: ColorTheme.claude.rawValue
         ])
         pollInterval = defaults.integer(forKey: SettingsKey.pollInterval)
         barDisplayMode = BarDisplayMode(rawValue: defaults.string(forKey: SettingsKey.barDisplayMode) ?? "") ?? .session
         oauthFallbackEnabled = defaults.bool(forKey: SettingsKey.oauthFallbackEnabled)
         showPercentageText = defaults.bool(forKey: SettingsKey.showPercentageText)
+        menuBarStyle = MenuBarStyle(rawValue: defaults.string(forKey: SettingsKey.menuBarStyle) ?? "") ?? .ring
+        colorTheme = ColorTheme(rawValue: defaults.string(forKey: SettingsKey.colorTheme) ?? "") ?? .claude
     }
 
     static let shared = UsageModel()
+
+    /// A model holding fixed data, for SwiftUI previews and for rendering the
+    /// README images offscreen. Never used by the running app.
+    ///
+    /// Settings go to a throwaway `UserDefaults` suite so rendering a preview
+    /// can't overwrite what the user actually chose, and the OAuth fallback is
+    /// forced off so a render can't turn into a network call.
+    static func preview(
+        snapshot: UsageSnapshot,
+        style: MenuBarStyle = .ring,
+        theme: ColorTheme = .claude
+    ) -> UsageModel {
+        let suite = UserDefaults(suiteName: "ClaudeQuotaBar.preview") ?? .standard
+        suite.removePersistentDomain(forName: "ClaudeQuotaBar.preview")
+        let model = UsageModel(defaults: suite)
+        model.oauthFallbackEnabled = false
+        model.menuBarStyle = style
+        model.colorTheme = theme
+        model.snapshot = snapshot
+        return model
+    }
 
     private let client = OAuthUsageClient()
     private var timer: Timer?
@@ -164,14 +197,30 @@ final class UsageModel: ObservableObject {
     }
 
     /// Exponential backoff, honouring `Retry-After` when the server sent one.
+    ///
+    /// The exponential starts at `backoffBase` and doubles per consecutive 429,
+    /// so the first strike costs a minute rather than the whole ceiling. A
+    /// `Retry-After` further out always wins — the server knows when the window
+    /// actually reopens — but one closer in can't undercut the exponential,
+    /// which is the only thing damping a server that keeps saying "try again
+    /// in 5 seconds" and then 429s again.
+    nonisolated static func backoffDeadline(
+        consecutiveRateLimits: Int,
+        retryAt: Date?,
+        now: Date = Date()
+    ) -> Date {
+        let exponent = Double(max(0, consecutiveRateLimits - 1))
+        let interval = min(Defaults.maxBackoff, Defaults.backoffBase * pow(2, exponent))
+        let floorDate = now.addingTimeInterval(interval)
+        return max(retryAt ?? floorDate, floorDate)
+    }
+
     private func applyBackoff(retryAt: Date?) {
         consecutiveRateLimits += 1
-        let exponential = min(
-            Defaults.maxBackoff,
-            TimeInterval(pollInterval) * pow(2, Double(consecutiveRateLimits))
+        backoffUntil = Self.backoffDeadline(
+            consecutiveRateLimits: consecutiveRateLimits,
+            retryAt: retryAt
         )
-        let candidate = Date().addingTimeInterval(exponential)
-        backoffUntil = max(retryAt ?? candidate, candidate)
     }
 
     /// File-watch callback. Only adopt a cache write that is actually newer than
@@ -185,7 +234,12 @@ final class UsageModel: ObservableObject {
 
     private func adopt(_ new: UsageSnapshot, context newContext: StatusLineCache.Context?) {
         if let current = snapshot, new.capturedAt < current.capturedAt { return }
-        snapshot = new
+        var adopted = new
+        // The plan badge only ever arrives from the OAuth path. Once we know
+        // it, keep it — otherwise it would blink out of the header on the next
+        // status line write and back in on the next poll.
+        if adopted.plan == nil { adopted.plan = snapshot?.plan }
+        snapshot = adopted
         if let newContext { context = newContext }
     }
 }

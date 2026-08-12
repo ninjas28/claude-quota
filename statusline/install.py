@@ -13,6 +13,7 @@ stdin and prints its output. Your status line looks exactly the same afterwards.
 
 import json
 import os
+import shlex
 import shutil
 import sys
 
@@ -31,6 +32,9 @@ def load_settings():
         sys.exit("error: could not parse %s (%s)" % (SETTINGS, error))
 
 
+CHAIN_MARKER = "CLAUDE_QUOTA_CHAIN="
+
+
 def build_command(current):
     """Our script, chaining to whatever status line was there before.
 
@@ -39,26 +43,35 @@ def build_command(current):
     replaces the wrapper with a bare invocation and silently discards the
     user's original status line. Rebuilding this way also repairs the path if
     the repo moved.
+
+    Both halves are shell-quoted. Claude Code runs this string through a shell,
+    so an unquoted script path breaks the moment the repo lives under a
+    directory with a space in it, and an unquoted (or double-quoted) previous
+    command gets its `$VARS` and backticks expanded before our bridge ever
+    sees them.
     """
     previous = unwrap(current) if current and MARKER in current else current
     if previous and MARKER not in previous:
-        return "CLAUDE_QUOTA_CHAIN=%s %s" % (json.dumps(previous), SCRIPT)
-    return SCRIPT
+        return "%s%s %s" % (CHAIN_MARKER, shlex.quote(previous), shlex.quote(SCRIPT))
+    return shlex.quote(SCRIPT)
 
 
 def unwrap(command):
-    """Recover the original command from a chained one, if present."""
+    """Recover the original command from a chained one, if present.
+
+    Splits with `shlex` the same way a shell would, which reads both the
+    current single-quoted form and the double-quoted form earlier versions
+    wrote -- so upgrading in place doesn't lose the user's status line.
+    """
     if not command or MARKER not in command:
         return None
-    marker = "CLAUDE_QUOTA_CHAIN="
-    if not command.startswith(marker):
-        return None
-    remainder = command[len(marker):]
     try:
-        decoded, _ = json.JSONDecoder().raw_decode(remainder)
-        return decoded
+        tokens = shlex.split(command)
     except ValueError:
         return None
+    if not tokens or not tokens[0].startswith(CHAIN_MARKER):
+        return None
+    return tokens[0][len(CHAIN_MARKER):] or None
 
 
 def save(settings):

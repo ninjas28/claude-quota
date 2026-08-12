@@ -30,11 +30,57 @@ enum BarDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// What shape the menu bar indicator takes.
+enum MenuBarStyle: String, CaseIterable, Identifiable {
+    case ring
+    case bar
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .ring: return "Ring"
+        case .bar: return "Bar"
+        }
+    }
+}
+
+/// How a percentage picks its colour.
+///
+/// Two honest positions, not a spectrum: match Claude's own usage panel, or
+/// let the fill carry severity. The ring and the popover bars always agree —
+/// a menu bar that says orange while the popover says blue is worse than
+/// either on its own.
+enum ColorTheme: String, CaseIterable, Identifiable {
+    /// One flat blue at every level, like Claude's usage screen.
+    case claude
+    /// Green below 50%, yellow to 80%, orange to 95%, red above.
+    case usage
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .claude: return "Claude blue"
+        case .usage: return "Usage ramp"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .claude: return "Matches Claude's usage screen. Colour never signals how full you are."
+        case .usage: return "Green under 50%, yellow to 80%, orange to 95%, red above."
+        }
+    }
+}
+
 enum SettingsKey {
     static let pollInterval = "pollIntervalSeconds"
     static let barDisplayMode = "barDisplayMode"
     static let oauthFallbackEnabled = "oauthFallbackEnabled"
     static let showPercentageText = "showPercentageText"
+    static let menuBarStyle = "menuBarStyle"
+    static let colorTheme = "colorTheme"
 }
 
 enum PollInterval {
@@ -45,7 +91,7 @@ enum PollInterval {
         seconds < 3_600 ? "\(seconds / 60) min" : "\(seconds / 3_600) hr"
     }
 
-    static let `default` = 300
+    static let `default` = 60
 }
 
 enum Defaults {
@@ -53,6 +99,12 @@ enum Defaults {
     /// triggers an OAuth poll. Sized so an active session (which re-renders on
     /// every turn) essentially never triggers a network call.
     static let cacheStaleAfter: TimeInterval = 120
+
+    /// First backoff after a 429, doubling per consecutive rate limit. Fixed
+    /// rather than derived from `pollInterval`, which at the 30-minute setting
+    /// would land on the ceiling from the very first 429 and make the
+    /// exponential meaningless.
+    static let backoffBase: TimeInterval = 60
 
     /// Backoff ceiling after repeated 429s from the usage endpoint.
     static let maxBackoff: TimeInterval = 1_800

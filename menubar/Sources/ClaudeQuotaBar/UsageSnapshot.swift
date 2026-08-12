@@ -3,45 +3,51 @@ import Foundation
 /// The rolling windows Anthropic reports for a Claude.ai subscription.
 ///
 /// `fiveHour` is the "session" window most people care about minute to minute;
-/// the `sevenDay*` windows are the weekly ceilings. The model-scoped weekly
-/// windows only exist on some plans, so every window is optional at runtime.
+/// the weekly ones are the ceilings. Model-scoped weekly windows only exist on
+/// some plans, so every window is optional at runtime.
 enum UsageWindowKind: String, CaseIterable, Identifiable {
     case fiveHour
     case sevenDay
-    case sevenDayOpus
-    case sevenDaySonnet
+    /// A weekly ceiling that applies to one model rather than the whole plan.
+    /// The model it covers arrives at runtime, in `UsageWindow.scopeLabel`.
+    case weeklyScoped
 
     var id: String { rawValue }
 
+    /// Row labels, phrased the way Claude's usage screen phrases them. The
+    /// weekly rows don't repeat "Weekly", the section header carries that.
     var label: String {
         switch self {
-        case .fiveHour: return "Session"
-        case .sevenDay: return "Weekly"
-        case .sevenDayOpus: return "Weekly · Opus"
-        case .sevenDaySonnet: return "Weekly · Sonnet"
+        case .fiveHour: return "Current session"
+        case .sevenDay: return "All models"
+        case .weeklyScoped: return "Scoped"
         }
     }
 
-    var shortLabel: String {
-        switch self {
-        case .fiveHour: return "5h"
-        case .sevenDay: return "7d"
-        case .sevenDayOpus: return "Opus"
-        case .sevenDaySonnet: return "Sonnet"
-        }
-    }
+    /// Whether this window belongs under the "Weekly limits" heading.
+    var isWeekly: Bool { self != .fiveHour }
 
     /// Order used when rendering the popover.
-    static let displayOrder: [UsageWindowKind] = [.fiveHour, .sevenDay, .sevenDayOpus, .sevenDaySonnet]
+    static let displayOrder: [UsageWindowKind] = [.fiveHour, .sevenDay, .weeklyScoped]
 }
 
 struct UsageWindow: Equatable {
-    /// 0...100. Anthropic reports this as a percentage, not a 0-1 fraction.
+    /// 0...100. Both sources report this as a percentage, not a 0-1 fraction.
+    /// (The legacy CLI's response headers use 0-1 — different source, different
+    /// scale. `OAuthUsageClientTests` pins this down.)
     var usedPercentage: Double
     var resetsAt: Date?
+    /// What this window is scoped to, when it isn't the whole plan — e.g. the
+    /// display name of a single model. Nil for plan-wide windows.
+    var scopeLabel: String?
+
+    init(usedPercentage: Double, resetsAt: Date?, scopeLabel: String? = nil) {
+        self.usedPercentage = usedPercentage
+        self.resetsAt = resetsAt
+        self.scopeLabel = scopeLabel
+    }
 
     var clampedPercentage: Double { min(max(usedPercentage, 0), 100) }
-    var remainingPercentage: Double { max(0, 100 - clampedPercentage) }
 }
 
 /// Where a snapshot came from. Both sources report the same numbers; the
@@ -68,26 +74,63 @@ struct UsageEntry: Identifiable, Equatable {
     var kind: UsageWindowKind
     var window: UsageWindow
 
-    var id: String { kind.rawValue }
+    /// Scope is part of the identity: an account can report several scoped
+    /// weekly windows, which share a `kind` but must not share a `ForEach` id.
+    var id: String {
+        guard let scope = window.scopeLabel else { return kind.rawValue }
+        return "\(kind.rawValue)·\(scope)"
+    }
+
+    /// A scoped window is named after the model it covers ("Fable"); everything
+    /// else uses its kind's label.
+    var label: String { window.scopeLabel ?? kind.label }
+
+    /// The line under the label. Claude's screen shows the countdown, or a
+    /// "not used yet" note for a window still sitting at zero.
+    func subtitle(now: Date) -> String? {
+        if window.clampedPercentage == 0 {
+            return "You haven't used \(window.scopeLabel ?? "this") yet"
+        }
+        guard let resetsAt = window.resetsAt else { return nil }
+        guard resetsAt > now else { return "Reset" }
+        return "Resets in \(RelativeTime.longCountdown(to: resetsAt, from: now))"
+    }
 }
 
 struct UsageSnapshot: Equatable {
-    var windows: [UsageWindowKind: UsageWindow]
+    /// An ordered list rather than a dictionary keyed by kind: the usage
+    /// endpoint can report more than one `weekly_scoped` window (one per
+    /// model), and those collide on `kind`.
+    var windows: [UsageEntry]
     /// Whether the account has extra/overage usage enabled. Absent when unknown.
     var extraUsageEnabled: Bool?
     var capturedAt: Date
     var source: UsageSource
+    /// Plan badge for the header ("Max (5x)"). Only the OAuth path knows it —
+    /// it comes off the stored credential, not the usage payload.
+    var plan: String?
 
-    subscript(kind: UsageWindowKind) -> UsageWindow? { windows[kind] }
+    subscript(kind: UsageWindowKind) -> UsageWindow? {
+        windows.first { $0.kind == kind }?.window
+    }
 
     var age: TimeInterval { max(0, Date().timeIntervalSince(capturedAt)) }
 
-    /// Windows that actually have data, in display order.
+    /// Windows that actually have data, in display order. Sorted on the index
+    /// into `displayOrder` and the original position, so several windows of the
+    /// same kind keep the order the server sent them in.
     var presentWindows: [UsageEntry] {
-        UsageWindowKind.displayOrder.compactMap { kind in
-            windows[kind].map { UsageEntry(kind: kind, window: $0) }
-        }
+        windows.enumerated().sorted { left, right in
+            let leftRank = UsageWindowKind.displayOrder.firstIndex(of: left.element.kind) ?? .max
+            let rightRank = UsageWindowKind.displayOrder.firstIndex(of: right.element.kind) ?? .max
+            if leftRank != rightRank { return leftRank < rightRank }
+            return left.offset < right.offset
+        }.map(\.element)
     }
+
+    /// The two groups Claude's usage screen splits windows into.
+    var sessionWindows: [UsageEntry] { presentWindows.filter { !$0.kind.isWeekly } }
+    var weeklyWindows: [UsageEntry] { presentWindows.filter(\.kind.isWeekly) }
 
     /// The highest utilization across every reported window — what the menu bar
     /// shows in "worst window" mode, since that is the one that will bite first.

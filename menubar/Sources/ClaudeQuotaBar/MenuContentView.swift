@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 
+/// Laid out like Claude's own usage screen: a label column with a countdown
+/// beneath it, a capsule bar, and "N% used" on the right, grouped into the
+/// session window and the weekly ones.
 struct MenuContentView: View {
     @ObservedObject var model: UsageModel
     /// Local to the popover so countdowns only tick while it's actually open.
@@ -26,13 +29,42 @@ struct MenuContentView: View {
             Divider()
 
             if let snapshot = model.snapshot {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(snapshot.presentWindows) { entry in
-                        WindowRow(kind: entry.kind, window: entry.window, stale: isStale, now: now)
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(snapshot.sessionWindows) { entry in
+                        WindowRow(entry: entry, stale: isStale, theme: model.colorTheme, now: now)
+                    }
+
+                    if !snapshot.weeklyWindows.isEmpty {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Weekly limits")
+                                .font(.system(size: 12, weight: .semibold))
+                            ForEach(snapshot.weeklyWindows) { entry in
+                                WindowRow(
+                                    entry: entry,
+                                    stale: isStale,
+                                    theme: model.colorTheme,
+                                    now: now
+                                )
+                            }
+                        }
+                    }
+
+                    // Only shown when we actually know: the status line payload
+                    // doesn't report it, so this stays hidden on cached data.
+                    if let extraUsage = snapshot.extraUsageEnabled {
+                        HStack(spacing: 5) {
+                            Image(systemName: extraUsage ? "plus.circle.fill" : "minus.circle")
+                                .font(.system(size: 9))
+                            Text(extraUsage
+                                 ? "Extra usage on — work continues past 100%"
+                                 : "Extra usage off — requests stop at 100%")
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
             } else {
                 emptyState
             }
@@ -45,15 +77,20 @@ struct MenuContentView: View {
             Divider()
             footer
         }
-        .frame(width: 288)
+        .frame(width: 420)
         .onReceive(clock) { now = $0 }
         .onAppear { model.refresh() }
     }
 
     private var header: some View {
-        HStack {
-            Text("Claude Usage")
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("Plan usage limits")
                 .font(.system(size: 13, weight: .semibold))
+            if let plan = model.snapshot?.plan {
+                Text(plan)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             Button { model.refreshNow() } label: {
                 Image(systemName: "arrow.clockwise")
@@ -64,8 +101,8 @@ struct MenuContentView: View {
             .opacity(model.isRefreshing ? 0.4 : 1)
             .help("Refresh now")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
     }
 
     private var emptyState: some View {
@@ -77,7 +114,7 @@ struct MenuContentView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 16)
     }
 
@@ -95,7 +132,7 @@ struct MenuContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
@@ -128,38 +165,54 @@ struct MenuContentView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 }
 
 private struct WindowRow: View {
-    var kind: UsageWindowKind
-    var window: UsageWindow
+    var entry: UsageEntry
     var stale: Bool
-    /// Passed in so the countdown re-renders on the model's clock tick.
+    var theme: ColorTheme
+    /// Passed in so the countdown re-renders on the popover's clock tick.
     var now: Date
 
+    /// Fixed columns so every bar starts and ends on the same x, however long
+    /// the labels are — the alignment is most of what makes Claude's version
+    /// read as a table rather than a list.
+    private enum Column {
+        /// Wide enough for "You haven't used Fable yet" on one line. Letting
+        /// that wrap makes one row taller than the others and the table stops
+        /// reading as a table.
+        static let label: CGFloat = 152
+        static let percentage: CGFloat = 64
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(kind.label)
-                    .font(.system(size: 11, weight: .medium))
-                Spacer()
-                Text("\(Int(window.clampedPercentage.rounded()))%")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(UsageColor.color(window.clampedPercentage))
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.label)
+                    .font(.system(size: 12))
+                if let subtitle = entry.subtitle(now: now) {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
+            .frame(width: Column.label, alignment: .leading)
 
-            UsageBar(percentage: window.clampedPercentage, stale: stale)
+            UsageBar(
+                percentage: entry.window.clampedPercentage,
+                stale: stale,
+                theme: theme
+            )
 
-            if let resetsAt = window.resetsAt {
-                Text(resetsAt > now
-                     ? "Resets in \(RelativeTime.countdown(to: resetsAt)) · \(RelativeTime.clock(resetsAt))"
-                     : "Reset")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
+            Text("\(Int(entry.window.clampedPercentage.rounded()))% used")
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: Column.percentage, alignment: .trailing)
         }
     }
 }

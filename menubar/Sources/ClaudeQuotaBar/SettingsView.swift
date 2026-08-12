@@ -17,13 +17,33 @@ struct SettingsView: View {
                 }
             }
 
+            Picker("Indicator", selection: $model.menuBarStyle) {
+                ForEach(MenuBarStyle.allCases) { style in
+                    Text(style.label).tag(style)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Picker("Colours", selection: $model.colorTheme) {
+                    ForEach(ColorTheme.allCases) { theme in
+                        Text(theme.label).tag(theme)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(model.colorTheme.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Picker("Check every", selection: $model.pollInterval) {
                 ForEach(PollInterval.choices, id: \.self) { seconds in
                     Text(PollInterval.label(seconds)).tag(seconds)
                 }
             }
 
-            Toggle("Show percentage next to the ring", isOn: $model.showPercentageText)
+            Toggle("Show percentage in the menu bar", isOn: $model.showPercentageText)
 
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Use the usage API when no session is running", isOn: $model.oauthFallbackEnabled)
