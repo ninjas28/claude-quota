@@ -54,8 +54,16 @@ pub fn plan_label(subscription_type: Option<&str>, rate_limit_tier: Option<&str>
         let tier = tier.to_lowercase();
         if !tier.is_empty() {
             let cleaned = tier.replace("default_", "").replace("claude_", "");
-            let mut parts: Vec<String> =
-                cleaned.split('_').filter(|p| !p.is_empty()).map(|p| p.to_string()).collect();
+            // "ai" is left over from "claude_ai" -- it names the product, not
+            // the plan. On an account whose tier is the generic
+            // `default_claude_ai` it is *all* that is left, and taking it at
+            // face value badges a Pro account as "Ai". Drop it and let the
+            // subscription type answer instead.
+            let mut parts: Vec<String> = cleaned
+                .split('_')
+                .filter(|part| !part.is_empty() && *part != "ai")
+                .map(|part| part.to_string())
+                .collect();
 
             // A trailing "5x" is the plan multiplier, not part of its name.
             let mut multiplier: Option<String> = None;
@@ -209,6 +217,22 @@ mod tests {
             rate_limit_tier: None,
         };
         assert!(!credentials.is_expired());
+    }
+
+    #[test]
+    fn the_generic_tier_defers_to_the_subscription_type() {
+        // A plain Pro account reports `default_claude_ai`, which carries no
+        // plan name at all -- stripping the prefixes leaves the bare word
+        // "ai". Badging that account "Ai" is what this guards against.
+        assert_eq!(plan_label(Some("pro"), Some("default_claude_ai")).unwrap(), "Pro");
+        assert_eq!(plan_label(Some("max"), Some("claude_ai")).unwrap(), "Max");
+        // Nothing to fall back to is better said with no badge than with "Ai".
+        assert_eq!(plan_label(None, Some("default_claude_ai")), None);
+        // A tier that does name a plan still wins over the subscription type.
+        assert_eq!(
+            plan_label(Some("pro"), Some("default_claude_ai_max_5x")).unwrap(),
+            "Max (5x)"
+        );
     }
 
     #[test]

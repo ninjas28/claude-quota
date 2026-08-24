@@ -96,9 +96,16 @@ struct App {
     placed_height: f32,
     /// What the last frame measured the popover content to actually be.
     measured_height: Option<f32>,
-    /// Set for the frame after showing: placement has to be repeated once the
-    /// window is out of its minimized state and can actually be moved.
-    replace_placement: bool,
+    /// The last size and position actually sent to the window, so a repeat is
+    /// dropped instead of becoming another `SetWindowPos` the user can see.
+    placed: Option<(f32, f32, f32)>,
+    /// Set while the popover is parked off-screen being measured. Carries the
+    /// estimate it was parked at, so the measurement can be filed against it.
+    measuring: Option<(Instant, f32)>,
+    /// The last (estimate, measured) pair. When a later open estimates the same
+    /// height, the content has the same shape and we already know exactly how
+    /// tall it comes out -- so it can be placed correctly first time.
+    last_measurement: Option<(f32, f32)>,
     /// Set when the user really means to exit, so the close request that
     /// follows is allowed through instead of being turned into "hide".
     quitting: bool,
@@ -139,7 +146,9 @@ impl App {
             anchor: (0.0, 0.0),
             placed_height: 0.0,
             measured_height: None,
-            replace_placement: false,
+            placed: None,
+            measuring: None,
+            last_measurement: None,
             quitting: false,
         }
     }
@@ -151,20 +160,48 @@ impl App {
     /// show state it had -- and Windows ignores move and resize requests aimed
     /// at a minimized window. So un-minimize first, and only then say where it
     /// goes.
-    fn place(&mut self, ctx: &egui::Context, height: f32) {
+    /// Move and size the window, skipping the call when nothing would change.
+    ///
+    /// Every one of these is a `SetWindowPos` the user can see, so sending the
+    /// same one twice is a visible stutter rather than a harmless no-op.
+    fn place_at(&mut self, ctx: &egui::Context, height: f32, position: (f32, f32)) {
+        if self.placed == Some((height, position.0, position.1)) {
+            return;
+        }
         let scale = ctx.pixels_per_point().max(0.5);
-        let physical = (popover::WIDTH * scale, height * scale);
-        let (x, y) = platform::popover_position(self.anchor, physical, platform::work_area());
-
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(popover::WIDTH, height)));
-        ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(x / scale, y / scale)));
+        ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(
+            position.0 / scale,
+            position.1 / scale,
+        )));
+        self.placed = Some((height, position.0, position.1));
         self.placed_height = height;
-        crate::debug_log!("place popover at ({x}, {y}) size {}x{height}", popover::WIDTH);
+        crate::debug_log!("place {:?} h={height}", position);
+    }
+
+    /// Where a popover of this height belongs, relative to the tray click.
+    fn popover_position(&self, ctx: &egui::Context, height: f32) -> (f32, f32) {
+        let scale = ctx.pixels_per_point().max(0.5);
+        let physical = (popover::WIDTH * scale, height * scale);
+        platform::popover_position(self.anchor, physical, platform::work_area())
+    }
+
+    /// Somewhere the window can be visible -- so egui is asked to paint it, and
+    /// its real height can be measured -- without the user seeing it.
+    ///
+    /// This exists because a hidden window is never painted, so there is no way
+    /// to lay the popover out before showing it. Parking it below the desktop
+    /// for one frame is what stops the first open of a given shape from
+    /// appearing at the estimated height and then visibly jumping to the real
+    /// one.
+    fn offscreen(&self) -> (f32, f32) {
+        let (left, _, _, bottom) = platform::work_area();
+        (left, bottom + 2_000.0)
     }
 
     fn show_popover(&mut self, ctx: &egui::Context) {
-        let height = {
+        let estimate = {
             let state = self.model.state();
             popover::height_for(&state, Utc::now())
         };
@@ -178,18 +215,44 @@ impl App {
         ctx.send_viewport_cmd(ViewportCommand::Title(WINDOW_TITLE.to_string()));
         ctx.send_viewport_cmd(ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(ViewportCommand::WindowLevel(WindowLevel::AlwaysOnTop));
-        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-        self.place(ctx, height);
-        ctx.send_viewport_cmd(ViewportCommand::Focus);
 
         self.mode = Mode::Popover;
-        self.shown_at = Some(Instant::now());
-        self.focus_attempts = 6;
-        self.ever_focused = false;
-        self.replace_placement = true;
         self.measured_height = None;
+        self.placed = None;
+
+        // A shape we have already measured can go straight to its final place.
+        let known = self
+            .last_measurement
+            .filter(|(cached, _)| (cached - estimate).abs() < 0.5)
+            .map(|(_, measured)| measured);
+
+        match known {
+            Some(height) => {
+                let position = self.popover_position(ctx, height);
+                self.place_at(ctx, height, position);
+                ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                self.reveal(ctx);
+            }
+            None => {
+                let offscreen = self.offscreen();
+                self.place_at(ctx, estimate, offscreen);
+                ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                self.measuring = Some((Instant::now(), estimate));
+                ctx.request_repaint();
+            }
+        }
+
         // Opening it is a good moment to check we are not showing something old.
         self.model.refresh(false);
+    }
+
+    /// The popover is now where it belongs; let it take focus and start
+    /// counting as shown.
+    fn reveal(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+        self.shown_at = Some(Instant::now());
+        self.focus_attempts = 3;
+        self.ever_focused = false;
     }
 
     /// Turn the window into a normal, decorated, centred settings window.
@@ -225,8 +288,9 @@ impl App {
         self.mode = Mode::Hidden;
         self.hidden_at = Some(Instant::now());
         self.focus_attempts = 0;
-        self.replace_placement = false;
+        self.measuring = None;
         self.measured_height = None;
+        self.placed = None;
     }
 
     fn toggle_popover(&mut self, ctx: &egui::Context) {
@@ -364,18 +428,42 @@ impl eframe::App for App {
             return;
         }
 
-        if std::mem::take(&mut self.replace_placement) {
-            self.place(ctx, self.placed_height);
-            ctx.request_repaint();
+        // Parked off-screen waiting to be measured. Nothing else applies until
+        // it has a real height and a real position -- in particular it must not
+        // be dismissed for not having focus it was never offered.
+        if let Some((since, estimate)) = self.measuring {
+            let measured = self.measured_height.take();
+            let timed_out = since.elapsed() > Duration::from_millis(300);
+
+            match measured {
+                Some(height) => {
+                    self.last_measurement = Some((estimate, height));
+                    let position = self.popover_position(ctx, height);
+                    self.place_at(ctx, height, position);
+                    self.measuring = None;
+                    self.reveal(ctx);
+                }
+                // Never got a frame. Show it at the estimate rather than leave
+                // it parked where nobody can see it.
+                None if timed_out => {
+                    let position = self.popover_position(ctx, estimate);
+                    self.place_at(ctx, estimate, position);
+                    self.measuring = None;
+                    self.reveal(ctx);
+                }
+                None => ctx.request_repaint(),
+            }
+            return;
         }
 
-        // Correct the popover to whatever the content actually measured. The
+        // Correct the popover if the content changed height while open. The
         // 2pt deadband is what stops a resize from feeding back into a
         // remeasure and oscillating forever.
         if self.mode == Mode::Popover {
             if let Some(measured) = self.measured_height.take() {
                 if (measured - self.placed_height).abs() > 2.0 {
-                    self.place(ctx, measured);
+                    let position = self.popover_position(ctx, measured);
+                    self.place_at(ctx, measured, position);
                     ctx.request_repaint();
                 }
             }
@@ -390,9 +478,10 @@ impl eframe::App for App {
             if let Some(hwnd) = hwnd {
                 platform::take_foreground(hwnd);
             }
-            // Come straight back so the next attempt is milliseconds away
-            // rather than a whole idle timeout.
-            ctx.request_repaint();
+            // Spaced rather than spun: `take_foreground` calls
+            // `BringWindowToTop`, and repeating that as fast as the frame loop
+            // will go is visible as a flicker.
+            ctx.request_repaint_after(Duration::from_millis(30));
         }
 
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
