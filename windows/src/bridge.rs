@@ -60,7 +60,9 @@ fn chained_command() -> Option<String> {
             return Some(chain);
         }
     }
-    Settings::load().chain.filter(|chain| !chain.trim().is_empty())
+    Settings::load()
+        .chain
+        .filter(|chain| !chain.trim().is_empty())
 }
 
 /// Cache the rate limit windows, atomically.
@@ -72,14 +74,18 @@ pub fn write_cache(data: &Value, target: &Path) -> std::io::Result<()> {
 
     let mut payload = serde_json::Map::new();
     for key in ["five_hour", "seven_day"] {
-        let Some(window) = rate_limits.and_then(|limits| limits.get(key)) else { continue };
+        let Some(window) = rate_limits.and_then(|limits| limits.get(key)) else {
+            continue;
+        };
         if !window.is_object() {
             continue;
         }
         // A window without a usable number is not a window. Note `as_f64`
         // declines a boolean, which is what keeps a 0% window from being
         // confused with `false`.
-        let Some(used) = window.get("used_percentage").and_then(Value::as_f64) else { continue };
+        let Some(used) = window.get("used_percentage").and_then(Value::as_f64) else {
+            continue;
+        };
         payload.insert(
             key.to_string(),
             json!({
@@ -97,9 +103,15 @@ pub fn write_cache(data: &Value, target: &Path) -> std::io::Result<()> {
     payload.insert("captured_at".into(), json!(unix_now()));
     payload.insert(
         "model".into(),
-        data.get("model").and_then(|m| m.get("display_name")).cloned().unwrap_or(Value::Null),
+        data.get("model")
+            .and_then(|m| m.get("display_name"))
+            .cloned()
+            .unwrap_or(Value::Null),
     );
-    payload.insert("session_id".into(), data.get("session_id").cloned().unwrap_or(Value::Null));
+    payload.insert(
+        "session_id".into(),
+        data.get("session_id").cloned().unwrap_or(Value::Null),
+    );
 
     let directory = target.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(directory)?;
@@ -146,8 +158,10 @@ pub fn default_statusline(data: &Value) -> String {
         .unwrap_or("Claude");
     let mut parts = vec![model.to_string()];
 
-    if let Some(context) =
-        data.get("context_window").and_then(|w| w.get("used_percentage")).and_then(Value::as_f64)
+    if let Some(context) = data
+        .get("context_window")
+        .and_then(|w| w.get("used_percentage"))
+        .and_then(Value::as_f64)
     {
         parts.push(format!("{} {}% ctx", bar(context, 10), context as i64));
     }
@@ -355,8 +369,14 @@ mod tests {
     #[test]
     fn the_context_bar_fills_proportionally_and_never_overflows() {
         assert_eq!(bar(0.0, 10).chars().filter(|c| *c == '\u{2593}').count(), 0);
-        assert_eq!(bar(50.0, 10).chars().filter(|c| *c == '\u{2593}').count(), 5);
-        assert_eq!(bar(100.0, 10).chars().filter(|c| *c == '\u{2593}').count(), 10);
+        assert_eq!(
+            bar(50.0, 10).chars().filter(|c| *c == '\u{2593}').count(),
+            5
+        );
+        assert_eq!(
+            bar(100.0, 10).chars().filter(|c| *c == '\u{2593}').count(),
+            10
+        );
         assert_eq!(bar(140.0, 10).chars().count(), 10);
         assert_eq!(bar(-5.0, 10).chars().count(), 10);
     }
@@ -375,6 +395,10 @@ mod tests {
     fn a_chained_command_that_fails_or_says_nothing_falls_back_to_our_rendering() {
         assert_eq!(run_chained("exit 1", "{}"), None);
         assert_eq!(run_chained("no-such-command-anywhere", "{}"), None);
-        assert_eq!(run_chained("echo.", "{}"), None, "whitespace only is not a status line");
+        assert_eq!(
+            run_chained("echo.", "{}"),
+            None,
+            "whitespace only is not a status line"
+        );
     }
 }

@@ -58,7 +58,11 @@ pub fn plan(
     }
 
     if !oauth_enabled {
-        return if cached_age.is_none() { RefreshPlan::NoSource } else { RefreshPlan::CacheOnly };
+        return if cached_age.is_none() {
+            RefreshPlan::NoSource
+        } else {
+            RefreshPlan::CacheOnly
+        };
     }
 
     if !force {
@@ -113,7 +117,10 @@ impl State {
     /// images. Never used by the running app -- the mirror of Swift's
     /// `UsageModel.preview`.
     pub fn preview(snapshot: UsageSnapshot) -> Self {
-        Self { snapshot: Some(snapshot), ..Self::default() }
+        Self {
+            snapshot: Some(snapshot),
+            ..Self::default()
+        }
     }
 
     /// Dim the indicator once data is old enough to mislead -- roughly two
@@ -174,7 +181,10 @@ impl UsageModel {
     /// `repaint` is called whenever state changes; the app hands it
     /// `egui::Context::request_repaint`.
     pub fn start(settings: Settings, repaint: impl Fn() + Send + Sync + 'static) -> Self {
-        let state = Arc::new(Mutex::new(State { settings, ..State::default() }));
+        let state = Arc::new(Mutex::new(State {
+            settings,
+            ..State::default()
+        }));
         let (sender, receiver) = std::sync::mpsc::channel();
 
         // The watcher fires on a notify thread; all it does is post a wake-up.
@@ -191,13 +201,20 @@ impl UsageModel {
             .spawn(move || run(worker_state, receiver, repaint))
             .ok();
 
-        let model = Self { state, sender, worker, _watcher: watcher };
+        let model = Self {
+            state,
+            sender,
+            worker,
+            _watcher: watcher,
+        };
         model.refresh(false);
         model
     }
 
     pub fn state(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn refresh(&self, force: bool) {
@@ -221,7 +238,10 @@ impl UsageModel {
             let mut state = self.state();
             let was_enabled = state.settings.oauth_fallback_enabled;
             change(&mut state.settings);
-            (state.settings.clone(), !was_enabled && state.settings.oauth_fallback_enabled)
+            (
+                state.settings.clone(),
+                !was_enabled && state.settings.oauth_fallback_enabled,
+            )
         };
         let _ = settings.save();
         let _ = self.sender.send(Wake::SettingsChanged);
@@ -288,7 +308,9 @@ fn run(state: Arc<Mutex<State>>, receiver: Receiver<Wake>, repaint: Arc<dyn Fn()
 /// File-watch callback. Only adopt a cache write that is actually newer than
 /// what we're showing, so a stale file can't clobber a fresh API result.
 fn load_cache_if_newer(state: &Arc<Mutex<State>>) -> bool {
-    let Some((cached, context)) = status_line_cache::read() else { return false };
+    let Some((cached, context)) = status_line_cache::read() else {
+        return false;
+    };
     let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(current) = &state.snapshot {
         if cached.captured_at <= current.captured_at {
@@ -311,7 +333,10 @@ fn refresh(state: &Arc<Mutex<State>>, client: &OAuthUsageClient, force: bool) {
             guard.adopt(snapshot, Some(context));
         }
 
-        let held_age = guard.snapshot.as_ref().map(|snapshot| snapshot.age_from(now));
+        let held_age = guard
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.age_from(now));
         let backoff_active = matches!(guard.backoff_until, Some(until) if now < until);
         let decision = plan(
             cached_age,
@@ -327,7 +352,9 @@ fn refresh(state: &Arc<Mutex<State>>, client: &OAuthUsageClient, force: bool) {
             }
             RefreshPlan::NoSource => guard.last_error = Some(UsageError::NoData),
             RefreshPlan::BackedOff => {
-                guard.last_error = Some(UsageError::RateLimited { retry_at: guard.backoff_until })
+                guard.last_error = Some(UsageError::RateLimited {
+                    retry_at: guard.backoff_until,
+                })
             }
             RefreshPlan::Poll => guard.is_refreshing = true,
         }
@@ -354,7 +381,9 @@ fn refresh(state: &Arc<Mutex<State>>, client: &OAuthUsageClient, force: bool) {
             guard.consecutive_rate_limits += 1;
             let until = backoff_deadline(guard.consecutive_rate_limits, retry_at, Utc::now());
             guard.backoff_until = Some(until);
-            guard.last_error = Some(UsageError::RateLimited { retry_at: Some(until) });
+            guard.last_error = Some(UsageError::RateLimited {
+                retry_at: Some(until),
+            });
         }
         Err(Failure::Transport(error)) => guard.last_error = Some(error),
     }
@@ -374,25 +403,43 @@ mod tests {
     fn a_fresh_status_line_cache_never_costs_a_network_call() {
         // The whole point of the app: while a session is open the cache is
         // rewritten every turn, so this is the branch that runs almost always.
-        assert_eq!(plan(Some(5.0), Some(5.0), false, true, false), RefreshPlan::CacheIsFresh);
-        assert_eq!(plan(Some(119.0), Some(119.0), false, true, false), RefreshPlan::CacheIsFresh);
+        assert_eq!(
+            plan(Some(5.0), Some(5.0), false, true, false),
+            RefreshPlan::CacheIsFresh
+        );
+        assert_eq!(
+            plan(Some(119.0), Some(119.0), false, true, false),
+            RefreshPlan::CacheIsFresh
+        );
     }
 
     #[test]
     fn a_stale_cache_is_what_reaches_for_the_network() {
-        assert_eq!(plan(Some(121.0), Some(121.0), false, true, false), RefreshPlan::Poll);
+        assert_eq!(
+            plan(Some(121.0), Some(121.0), false, true, false),
+            RefreshPlan::Poll
+        );
         assert_eq!(plan(None, None, false, true, false), RefreshPlan::Poll);
     }
 
     #[test]
     fn a_forced_refresh_ignores_freshness_and_backoff_alike() {
-        assert_eq!(plan(Some(5.0), Some(5.0), true, true, false), RefreshPlan::Poll);
-        assert_eq!(plan(Some(5.0), Some(5.0), true, true, true), RefreshPlan::Poll);
+        assert_eq!(
+            plan(Some(5.0), Some(5.0), true, true, false),
+            RefreshPlan::Poll
+        );
+        assert_eq!(
+            plan(Some(5.0), Some(5.0), true, true, true),
+            RefreshPlan::Poll
+        );
     }
 
     #[test]
     fn with_the_fallback_off_we_show_the_cache_or_say_there_is_nothing() {
-        assert_eq!(plan(Some(600.0), Some(600.0), false, false, false), RefreshPlan::CacheOnly);
+        assert_eq!(
+            plan(Some(600.0), Some(600.0), false, false, false),
+            RefreshPlan::CacheOnly
+        );
         assert_eq!(plan(None, None, false, false, false), RefreshPlan::NoSource);
         // Even forced: turning the fallback off means no network call, period.
         assert_eq!(plan(None, None, true, false, false), RefreshPlan::NoSource);
@@ -402,14 +449,23 @@ mod tests {
     fn something_recent_we_already_hold_is_good_enough_to_skip_a_poll() {
         // Cache is gone or stale, but the last OAuth result is 30s old. Opening
         // the popover repeatedly must not turn into a request each time.
-        assert_eq!(plan(None, Some(30.0), false, true, false), RefreshPlan::HeldRecently);
-        assert_eq!(plan(Some(600.0), Some(30.0), false, true, false), RefreshPlan::HeldRecently);
+        assert_eq!(
+            plan(None, Some(30.0), false, true, false),
+            RefreshPlan::HeldRecently
+        );
+        assert_eq!(
+            plan(Some(600.0), Some(30.0), false, true, false),
+            RefreshPlan::HeldRecently
+        );
     }
 
     #[test]
     fn backoff_suppresses_polling_until_it_elapses() {
         assert_eq!(plan(None, None, false, true, true), RefreshPlan::BackedOff);
-        assert_eq!(plan(None, Some(600.0), false, true, true), RefreshPlan::BackedOff);
+        assert_eq!(
+            plan(None, Some(600.0), false, true, true),
+            RefreshPlan::BackedOff
+        );
     }
 
     #[test]
@@ -420,7 +476,11 @@ mod tests {
         assert_eq!(after(2), 120);
         assert_eq!(after(3), 240);
         assert_eq!(after(6), 1_800);
-        assert_eq!(after(20), 1_800, "clamped, and no overflow on a long outage");
+        assert_eq!(
+            after(20),
+            1_800,
+            "clamped, and no overflow on a long outage"
+        );
     }
 
     #[test]
@@ -464,8 +524,14 @@ mod tests {
         state.adopt(from_api, None);
 
         // The status line has no idea what plan you are on.
-        state.adopt(UsageSnapshot::new(entries, at(60), UsageSource::StatusLine), None);
-        assert_eq!(state.snapshot.as_ref().unwrap().plan.as_deref(), Some("Max (5x)"));
+        state.adopt(
+            UsageSnapshot::new(entries, at(60), UsageSource::StatusLine),
+            None,
+        );
+        assert_eq!(
+            state.snapshot.as_ref().unwrap().plan.as_deref(),
+            Some("Max (5x)")
+        );
     }
 
     #[test]
@@ -485,8 +551,11 @@ mod tests {
         assert!(state.is_stale(), "nothing at all is as stale as it gets");
 
         state.settings.poll_interval_seconds = 60;
-        state.snapshot =
-            Some(UsageSnapshot::new(vec![], Utc::now(), UsageSource::StatusLine));
+        state.snapshot = Some(UsageSnapshot::new(
+            vec![],
+            Utc::now(),
+            UsageSource::StatusLine,
+        ));
         assert!(!state.is_stale());
 
         state.snapshot = Some(UsageSnapshot::new(

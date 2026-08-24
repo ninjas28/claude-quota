@@ -42,6 +42,27 @@ $ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Cl
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $RunValue = 'ClaudeQuota'
 
+function Invoke-Quota {
+    <#
+    .SYNOPSIS
+        Run a claude-quota subcommand and actually wait for it.
+
+    .DESCRIPTION
+        `& $exe args` does NOT wait for a windows-subsystem executable -- it
+        returns the moment the process launches, with $LASTEXITCODE 0 whatever
+        happens. That is not a style preference: uninstall used to run
+        `remove-statusline` and then immediately kill the process, so the
+        status line was never removed and nothing was printed to say so.
+
+        Start-Process -Wait is the form that waits, and -NoNewWindow is what
+        lets the subcommand's output reach the console.
+    #>
+    param([Parameter(Mandatory)] [string[]] $Arguments)
+
+    $process = Start-Process $InstalledExe -ArgumentList $Arguments -NoNewWindow -Wait -PassThru
+    return $process.ExitCode
+}
+
 function Stop-App {
     $running = Get-Process claude-quota -ErrorAction SilentlyContinue
     if ($running) {
@@ -58,7 +79,10 @@ if ($Uninstall) {
     if (Test-Path $InstalledExe) {
         # Ask the binary to undo its own settings.json edit while it still
         # exists -- it is the only thing that knows what was there before.
-        & $InstalledExe remove-statusline
+        # This has to complete before Stop-App runs, hence Invoke-Quota.
+        if ((Invoke-Quota remove-statusline) -ne 0) {
+            Write-Warning "Could not restore the previous status line; check ~/.claude/settings.json."
+        }
     } else {
         Write-Host "   (binary already gone; leaving settings.json alone)"
     }
@@ -130,8 +154,7 @@ Write-Host "==> Start Menu shortcut created"
 
 if (-not $SkipStatusLine) {
     Write-Host "==> Status line"
-    & $InstalledExe install-statusline
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-Quota install-statusline) -ne 0) {
         Write-Warning "Could not wire up the status line. The app still works using the usage API."
     }
 }

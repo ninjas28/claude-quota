@@ -14,7 +14,7 @@ use crate::gauge;
 use crate::model::State;
 use crate::relative_time;
 use crate::settings::{ColorTheme, IndicatorStyle};
-use crate::snapshot::{UsageWindowKind};
+use crate::snapshot::UsageWindowKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayCommand {
@@ -116,8 +116,10 @@ impl Tray {
     /// Redraw the icon and tooltip if -- and only if -- something they show has
     /// actually changed.
     pub fn sync(&mut self, state: &State) {
-        let displayed =
-            state.snapshot.as_ref().and_then(|s| state.settings.bar_display_mode.entry(s));
+        let displayed = state
+            .snapshot
+            .as_ref()
+            .and_then(|s| state.settings.bar_display_mode.entry(s));
         let percentage = displayed.as_ref().map(|e| e.window.clamped_percentage());
 
         let key = IconKey {
@@ -162,14 +164,24 @@ fn tooltip(state: &State) -> String {
 
     let mut parts = Vec::new();
     if let Some(window) = snapshot.window(UsageWindowKind::FiveHour) {
-        parts.push(format!("Session {}%", window.clamped_percentage().round() as i64));
+        parts.push(format!(
+            "Session {}%",
+            window.clamped_percentage().round() as i64
+        ));
     }
     if let Some(window) = snapshot.window(UsageWindowKind::SevenDay) {
-        parts.push(format!("Weekly {}%", window.clamped_percentage().round() as i64));
+        parts.push(format!(
+            "Weekly {}%",
+            window.clamped_percentage().round() as i64
+        ));
     }
     for entry in snapshot.weekly_windows() {
         if let Some(scope) = &entry.window.scope_label {
-            parts.push(format!("{} {}%", scope, entry.window.clamped_percentage().round() as i64));
+            parts.push(format!(
+                "{} {}%",
+                scope,
+                entry.window.clamped_percentage().round() as i64
+            ));
         }
     }
     if parts.is_empty() {
@@ -279,6 +291,10 @@ mod tests {
         }
         let state = State::preview(UsageSnapshot::new(windows, Utc::now(), UsageSource::OAuth));
         let tooltip = tooltip(&state);
-        assert!(tooltip.chars().count() <= 127, "{} chars: {tooltip}", tooltip.chars().count());
+        assert!(
+            tooltip.chars().count() <= 127,
+            "{} chars: {tooltip}",
+            tooltip.chars().count()
+        );
     }
 }

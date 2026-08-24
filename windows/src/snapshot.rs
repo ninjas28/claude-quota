@@ -71,7 +71,11 @@ pub struct UsageWindow {
 
 impl UsageWindow {
     pub fn new(used_percentage: f64, resets_at: Option<DateTime<Utc>>) -> Self {
-        Self { used_percentage, resets_at, scope_label: None }
+        Self {
+            used_percentage,
+            resets_at,
+            scope_label: None,
+        }
     }
 
     pub fn scoped(
@@ -79,7 +83,11 @@ impl UsageWindow {
         resets_at: Option<DateTime<Utc>>,
         scope_label: Option<String>,
     ) -> Self {
-        Self { used_percentage, resets_at, scope_label }
+        Self {
+            used_percentage,
+            resets_at,
+            scope_label,
+        }
     }
 
     pub fn clamped_percentage(&self) -> f64 {
@@ -147,7 +155,10 @@ impl UsageEntry {
         if resets_at <= now {
             return Some("Reset".to_string());
         }
-        Some(format!("Resets in {}", relative_time::long_countdown(resets_at, now)))
+        Some(format!(
+            "Resets in {}",
+            relative_time::long_countdown(resets_at, now)
+        ))
     }
 }
 
@@ -167,16 +178,21 @@ pub struct UsageSnapshot {
 }
 
 impl UsageSnapshot {
-    pub fn new(
-        windows: Vec<UsageEntry>,
-        captured_at: DateTime<Utc>,
-        source: UsageSource,
-    ) -> Self {
-        Self { windows, extra_usage_enabled: None, captured_at, source, plan: None }
+    pub fn new(windows: Vec<UsageEntry>, captured_at: DateTime<Utc>, source: UsageSource) -> Self {
+        Self {
+            windows,
+            extra_usage_enabled: None,
+            captured_at,
+            source,
+            plan: None,
+        }
     }
 
     pub fn window(&self, kind: UsageWindowKind) -> Option<&UsageWindow> {
-        self.windows.iter().find(|entry| entry.kind == kind).map(|entry| &entry.window)
+        self.windows
+            .iter()
+            .find(|entry| entry.kind == kind)
+            .map(|entry| &entry.window)
     }
 
     pub fn age_from(&self, now: DateTime<Utc>) -> f64 {
@@ -199,16 +215,25 @@ impl UsageSnapshot {
                 .cmp(&right.1.kind.rank())
                 .then(left.0.cmp(&right.0))
         });
-        indexed.into_iter().map(|(_, entry)| entry.clone()).collect()
+        indexed
+            .into_iter()
+            .map(|(_, entry)| entry.clone())
+            .collect()
     }
 
     /// The two groups Claude's usage screen splits windows into.
     pub fn session_windows(&self) -> Vec<UsageEntry> {
-        self.present_windows().into_iter().filter(|e| !e.kind.is_weekly()).collect()
+        self.present_windows()
+            .into_iter()
+            .filter(|e| !e.kind.is_weekly())
+            .collect()
     }
 
     pub fn weekly_windows(&self) -> Vec<UsageEntry> {
-        self.present_windows().into_iter().filter(|e| e.kind.is_weekly()).collect()
+        self.present_windows()
+            .into_iter()
+            .filter(|e| e.kind.is_weekly())
+            .collect()
     }
 
     /// The highest utilization across every reported window -- what the tray icon
@@ -330,8 +355,11 @@ mod tests {
             at(0),
             UsageSource::OAuth,
         );
-        let labels: Vec<String> =
-            snapshot.present_windows().iter().map(|e| e.label().to_string()).collect();
+        let labels: Vec<String> = snapshot
+            .present_windows()
+            .iter()
+            .map(|e| e.label().to_string())
+            .collect();
         assert_eq!(labels, vec!["Opus", "Fable"]);
     }
 
@@ -396,9 +424,15 @@ mod tests {
             UsageWindowKind::WeeklyScoped,
             UsageWindow::scoped(0.0, Some(at(3600)), Some("Fable".to_string())),
         );
-        assert!(untouched.subtitle(at(0)).unwrap().ends_with("used Fable yet"));
+        assert!(untouched
+            .subtitle(at(0))
+            .unwrap()
+            .ends_with("used Fable yet"));
 
-        let plain = UsageEntry::new(UsageWindowKind::FiveHour, UsageWindow::new(0.0, Some(at(60))));
+        let plain = UsageEntry::new(
+            UsageWindowKind::FiveHour,
+            UsageWindow::new(0.0, Some(at(60))),
+        );
         assert!(plain.subtitle(at(0)).unwrap().ends_with("used this yet"));
     }
 

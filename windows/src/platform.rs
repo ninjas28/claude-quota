@@ -63,7 +63,12 @@ pub fn work_area() -> (f32, f32, f32, f32) {
     if ok.is_err() {
         return (0.0, 0.0, 1920.0, 1080.0);
     }
-    (rect.left as f32, rect.top as f32, rect.right as f32, rect.bottom as f32)
+    (
+        rect.left as f32,
+        rect.top as f32,
+        rect.right as f32,
+        rect.bottom as f32,
+    )
 }
 
 #[cfg(not(windows))]
@@ -101,7 +106,8 @@ pub fn take_foreground(hwnd: isize) {
         let foreground = GetForegroundWindow();
         let ours = GetCurrentThreadId();
         let theirs = GetWindowThreadProcessId(foreground, None);
-        let borrowed = theirs != 0 && theirs != ours && AttachThreadInput(theirs, ours, true).as_bool();
+        let borrowed =
+            theirs != 0 && theirs != ours && AttachThreadInput(theirs, ours, true).as_bool();
 
         let _ = BringWindowToTop(window);
         let _ = SetForegroundWindow(window);

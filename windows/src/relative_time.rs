@@ -133,7 +133,10 @@ mod tests {
         // a leading zero would mean "03:45 PM" where Claude shows "3:45 PM".
         let rendered = clock_from(at(3600), at(0));
         assert!(!rendered.starts_with('0'), "{rendered}");
-        assert!(rendered.ends_with("AM") || rendered.ends_with("PM"), "{rendered}");
+        assert!(
+            rendered.ends_with("AM") || rendered.ends_with("PM"),
+            "{rendered}"
+        );
     }
 
     #[test]

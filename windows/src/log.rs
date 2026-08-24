@@ -12,12 +12,18 @@ pub fn enabled() -> bool {
 }
 
 fn path() -> Option<String> {
-    std::env::var("CLAUDE_QUOTA_LOG").ok().filter(|value| !value.is_empty())
+    std::env::var("CLAUDE_QUOTA_LOG")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 pub fn write(message: &str) {
     let Some(path) = path() else { return };
-    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
         return;
     };
     let stamp = chrono::Local::now().format("%H:%M:%S%.3f");

@@ -139,6 +139,13 @@ $env:CLAUDE_QUOTA_LOG = "$env:TEMP\claude-quota.log"
 It records tray events, popover placement, and why the popover was dismissed.
 It never records anything from the credential.
 
+`claude-quota.exe` is a windows-subsystem binary, so that launching the tray app
+never flashes a console. One consequence bites anything that scripts it: **the
+shell does not wait for it.** `& claude-quota.exe install-statusline` returns the
+moment the process launches, with an exit code of 0 whatever happens. Use
+`Start-Process -Wait -NoNewWindow -PassThru` -- which is also what makes the
+subcommand's output visible. `install.ps1` wraps that as `Invoke-Quota`.
+
 Other environment variables, all shared with the macOS app:
 `CLAUDE_QUOTA_CACHE` (cache file path), `CLAUDE_CONFIG_DIR` (`~/.claude`),
 `CLAUDE_QUOTA_HOME` (our settings directory), `CLAUDE_QUOTA_CHAIN` (chained

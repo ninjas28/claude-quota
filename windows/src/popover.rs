@@ -32,6 +32,15 @@ const PADDING: f32 = 16.0;
 /// The breathing room either side of the bar, between it and the label column
 /// on the left and the percentage column on the right.
 const GAP: f32 = 10.0;
+/// Heights for the two rows that push a control against the right edge.
+///
+/// They have to be stated. `Ui::with_layout` takes *all* the space still going
+/// spare, which for a right-aligned control means the entire remaining height
+/// of the popover -- so the content measures as tall as the window, the window
+/// is resized to match, and the next frame measures differently again. That
+/// feedback loop is what made the popover judder on open.
+const HEADER_ROW: f32 = 18.0;
+const FOOTER_ROW: f32 = 16.0;
 
 /// How wide the bar can be, given what is left of the row when it starts.
 ///
@@ -66,7 +75,11 @@ pub struct Rendered {
 }
 
 pub fn show(ui: &mut Ui, state: &State, now: DateTime<Utc>) -> Rendered {
-    let top = ui.min_rect().top();
+    // The cursor, not `min_rect`. A panel's `Ui` starts with `min_rect` already
+    // spanning the whole panel, so measuring that reports the height of the
+    // *window* -- and a window sized to its own height is a loop that never
+    // settles. The cursor only ever moves because something was allocated.
+    let top = ui.cursor().top();
     let mut action = None;
     let stale = state.is_stale();
     let theme = state.settings.color_theme;
@@ -84,7 +97,8 @@ pub fn show(ui: &mut Ui, state: &State, now: DateTime<Utc>) -> Rendered {
                     ui.add_space(6.0);
                     ui.label(RichText::new(plan).size(12.0).weak());
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let remaining = Vec2::new(ui.available_width(), HEADER_ROW);
+                ui.allocate_ui_with_layout(remaining, Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(PADDING);
                     // A frameless button still carries its padding, which would
                     // hold the glyph a few points further in than the heading
@@ -170,7 +184,10 @@ pub fn show(ui: &mut Ui, state: &State, now: DateTime<Utc>) -> Rendered {
     }
     ui.add_space(10.0);
 
-    Rendered { action, height: ui.min_rect().bottom() - top }
+    Rendered {
+        action,
+        height: ui.cursor().top() - top,
+    }
 }
 
 fn indented(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
@@ -205,7 +222,13 @@ fn window_row(ui: &mut Ui, entry: &UsageEntry, stale: bool, theme: ColorTheme, n
         );
 
         ui.add_space(GAP);
-        usage_bar(ui, percentage, stale, theme, bar_width(ui.available_width()));
+        usage_bar(
+            ui,
+            percentage,
+            stale,
+            theme,
+            bar_width(ui.available_width()),
+        );
 
         ui.add_space(GAP);
         ui.allocate_ui_with_layout(
@@ -265,7 +288,11 @@ fn usage_bar(ui: &mut Ui, percentage: f64, stale: bool, theme: ColorTheme, width
 fn error_banner(ui: &mut Ui, error: &UsageError) {
     ui.horizontal_top(|ui| {
         ui.add_space(PADDING);
-        ui.label(RichText::new("\u{26a0}").size(12.0).color(Color32::from_rgb(255, 149, 0)));
+        ui.label(
+            RichText::new("\u{26a0}")
+                .size(12.0)
+                .color(Color32::from_rgb(255, 149, 0)),
+        );
         ui.add_space(8.0);
         ui.vertical(|ui| {
             ui.set_max_width(WIDTH - PADDING * 2.0 - 24.0);
@@ -291,8 +318,11 @@ fn footer(ui: &mut Ui, state: &State, stale: bool) -> Option<Action> {
             ui.painter().circle_filled(rect.center(), 2.5, dot);
 
             ui.add_space(4.0);
-            let mut line =
-                format!("{} \u{b7} {}", relative_time::age(snapshot.age()), snapshot.source.label());
+            let mut line = format!(
+                "{} \u{b7} {}",
+                relative_time::age(snapshot.age()),
+                snapshot.source.label()
+            );
             if let Some(model) = state.context.as_ref().and_then(|c| c.model.as_deref()) {
                 if snapshot.source == crate::snapshot::UsageSource::StatusLine {
                     line.push_str(&format!(" \u{b7} {model}"));
@@ -311,7 +341,8 @@ fn footer(ui: &mut Ui, state: &State, stale: bool) -> Option<Action> {
         {
             action = Some(Action::OpenSettings);
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let remaining = Vec2::new(ui.available_width(), FOOTER_ROW);
+        ui.allocate_ui_with_layout(remaining, Layout::right_to_left(Align::Center), |ui| {
             ui.add_space(PADDING);
             if ui
                 .add(egui::Button::new(RichText::new("Quit").size(11.0).weak()).frame(false))
@@ -378,9 +409,7 @@ pub fn height_for(state: &State, now: DateTime<Utc>) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::{
-        UsageSnapshot, UsageSource, UsageWindow, UsageWindowKind,
-    };
+    use crate::snapshot::{UsageSnapshot, UsageSource, UsageWindow, UsageWindowKind};
     use chrono::TimeZone;
 
     fn now() -> DateTime<Utc> {
@@ -418,6 +447,87 @@ mod tests {
         assert!(bar_width(-500.0) >= 20.0);
     }
 
+    /// Lay the popover out in a window `window_height` tall and report what it
+    /// measured its own content to be.
+    fn measure_in_window(state: &State, window_height: f32) -> f32 {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(WIDTH, window_height),
+            )),
+            ..Default::default()
+        };
+        let mut measured = 0.0;
+        // Twice: egui needs a frame to warm its font atlas and id map, and a
+        // first-frame figure would not be the one the app acts on.
+        for _ in 0..2 {
+            let _ = ctx.run_ui(input.clone(), |ui| {
+                egui::CentralPanel::default()
+                    .frame(egui::containers::Frame::default().inner_margin(egui::Margin::ZERO))
+                    .show(ui, |ui| {
+                        measured = show(ui, state, now()).height;
+                    });
+            });
+        }
+        measured
+    }
+
+    #[test]
+    fn the_measured_height_does_not_depend_on_the_window_height() {
+        // The judder bug. `Ui::with_layout` takes all the space still going
+        // spare, so a right-aligned control made the content measure as tall as
+        // the window; the app resized the window to match, which changed the
+        // measurement, which resized the window... The popover visibly walked
+        // up and down the screen for as long as it took to converge, which was
+        // never.
+        let resets = now() + chrono::Duration::hours(2);
+        let state = state_with(vec![
+            UsageEntry::new(
+                UsageWindowKind::FiveHour,
+                UsageWindow::new(21.0, Some(resets)),
+            ),
+            UsageEntry::new(
+                UsageWindowKind::SevenDay,
+                UsageWindow::new(31.0, Some(resets)),
+            ),
+        ]);
+
+        let baseline = measure_in_window(&state, 300.0);
+        for window_height in [200.0, 260.0, 400.0, 900.0] {
+            let measured = measure_in_window(&state, window_height);
+            assert!(
+                (measured - baseline).abs() < 1.0,
+                "content measured {measured} in a {window_height}pt window but                  {baseline} in a 300pt one -- the two are coupled, and the app                  will oscillate resizing one to fit the other"
+            );
+        }
+    }
+
+    #[test]
+    fn the_estimated_height_is_close_enough_to_the_real_one_to_not_jump() {
+        // The estimate is what the window is first sized to. It does not have
+        // to be exact -- the app measures and corrects -- but a wild estimate
+        // is a visible jump on the first open of a shape.
+        let resets = now() + chrono::Duration::hours(2);
+        let state = state_with(vec![
+            UsageEntry::new(
+                UsageWindowKind::FiveHour,
+                UsageWindow::new(21.0, Some(resets)),
+            ),
+            UsageEntry::new(
+                UsageWindowKind::SevenDay,
+                UsageWindow::new(31.0, Some(resets)),
+            ),
+        ]);
+
+        let estimate = height_for(&state, now());
+        let measured = measure_in_window(&state, estimate);
+        assert!(
+            (estimate - measured).abs() < 40.0,
+            "estimated {estimate}pt, measured {measured}pt"
+        );
+    }
+
     #[test]
     fn the_popover_grows_with_what_it_has_to_show() {
         let resets = now() + chrono::Duration::hours(2);
@@ -426,8 +536,14 @@ mod tests {
             UsageWindow::new(23.0, Some(resets)),
         )]);
         let three = state_with(vec![
-            UsageEntry::new(UsageWindowKind::FiveHour, UsageWindow::new(23.0, Some(resets))),
-            UsageEntry::new(UsageWindowKind::SevenDay, UsageWindow::new(41.0, Some(resets))),
+            UsageEntry::new(
+                UsageWindowKind::FiveHour,
+                UsageWindow::new(23.0, Some(resets)),
+            ),
+            UsageEntry::new(
+                UsageWindowKind::SevenDay,
+                UsageWindow::new(41.0, Some(resets)),
+            ),
             UsageEntry::new(
                 UsageWindowKind::WeeklyScoped,
                 UsageWindow::scoped(8.0, Some(resets), Some("Fable".into())),

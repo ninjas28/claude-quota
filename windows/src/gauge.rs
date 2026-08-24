@@ -77,7 +77,10 @@ pub fn render(
         IndicatorStyle::Number => number(&mut pixmap, percentage, stale, theme, scale),
     }
 
-    Icon { rgba: pixmap.take(), size }
+    Icon {
+        rgba: pixmap.take(),
+        size,
+    }
 }
 
 fn ring(pixmap: &mut Pixmap, percentage: Option<f64>, stale: bool, theme: ColorTheme, scale: f32) {
@@ -85,8 +88,14 @@ fn ring(pixmap: &mut Pixmap, percentage: Option<f64>, stale: bool, theme: ColorT
     let radius = 6.5 * scale;
     let line_width = 2.5 * scale;
 
-    let mut stroke = Stroke { width: line_width, ..Stroke::default() };
-    let mut paint = Paint { anti_alias: true, ..Paint::default() };
+    let mut stroke = Stroke {
+        width: line_width,
+        ..Stroke::default()
+    };
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Paint::default()
+    };
 
     paint.set_color(track_color());
     if let Some(path) = arc(center, center, radius, 0.0, std::f32::consts::TAU) {
@@ -135,7 +144,10 @@ fn bar(pixmap: &mut Pixmap, percentage: Option<f64>, stale: bool, theme: ColorTh
     let radius = height / 2.0;
 
     let clamped = percentage.map(|p| p.clamp(0.0, 100.0));
-    let mut paint = Paint { anti_alias: true, ..Paint::default() };
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Paint::default()
+    };
 
     let track = match clamped {
         Some(clamped) if clamped > 0.0 => match theme {
@@ -149,7 +161,13 @@ fn bar(pixmap: &mut Pixmap, percentage: Option<f64>, stale: bool, theme: ColorTh
     };
     paint.set_color(track);
     if let Some(path) = capsule(left, top, width, height, radius) {
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
     }
 
     let Some(clamped) = clamped else { return };
@@ -162,7 +180,13 @@ fn bar(pixmap: &mut Pixmap, percentage: Option<f64>, stale: bool, theme: ColorTh
     let filled = (width * (clamped / 100.0) as f32).max(height);
     paint.set_color(color(clamped, theme, stale));
     if let Some(path) = capsule(left, top, filled, height, radius) {
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
     }
 }
 
@@ -171,7 +195,13 @@ fn bar(pixmap: &mut Pixmap, percentage: Option<f64>, stale: bool, theme: ColorTh
 /// No macOS counterpart: a `MenuBarExtra` label can hold an image *and* text, so
 /// the macOS app writes "23%" beside the ring. A tray icon is a bare square
 /// bitmap with no label, so the number has to go inside it or nowhere.
-fn number(pixmap: &mut Pixmap, percentage: Option<f64>, stale: bool, theme: ColorTheme, scale: f32) {
+fn number(
+    pixmap: &mut Pixmap,
+    percentage: Option<f64>,
+    stale: bool,
+    theme: ColorTheme,
+    scale: f32,
+) {
     let text = match percentage {
         Some(percentage) => format!("{}", percentage.clamp(0.0, 100.0).round() as i64),
         None => "--".to_string(),
@@ -289,7 +319,9 @@ mod text {
             positioned.position = ab_glyph::point(pen, baseline);
             pen += advance;
 
-            let Some(outline) = font.outline_glyph(positioned) else { continue };
+            let Some(outline) = font.outline_glyph(positioned) else {
+                continue;
+            };
             let bounds = outline.px_bounds();
             outline.draw(|x, y, coverage| {
                 if coverage <= 0.0 {
@@ -323,7 +355,10 @@ mod tests {
     use super::*;
 
     fn opaque_pixels(icon: &Icon) -> usize {
-        icon.rgba.chunks_exact(4).filter(|pixel| pixel[3] > 0).count()
+        icon.rgba
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0)
+            .count()
     }
 
     fn colored_pixels(icon: &Icon, expected: [u8; 3]) -> usize {
@@ -345,7 +380,11 @@ mod tests {
     #[test]
     fn the_claude_theme_is_one_blue_at_every_level() {
         for percentage in [1.0, 49.0, 79.0, 94.0, 100.0] {
-            assert_eq!(rgb(percentage, ColorTheme::Claude), CLAUDE_BLUE, "at {percentage}%");
+            assert_eq!(
+                rgb(percentage, ColorTheme::Claude),
+                CLAUDE_BLUE,
+                "at {percentage}%"
+            );
         }
     }
 
@@ -378,7 +417,13 @@ mod tests {
     fn a_fuller_ring_paints_more_of_itself() {
         let sweep = |percentage| {
             colored_pixels(
-                &render(Some(percentage), false, IndicatorStyle::Ring, ColorTheme::Claude, 64),
+                &render(
+                    Some(percentage),
+                    false,
+                    IndicatorStyle::Ring,
+                    ColorTheme::Claude,
+                    64,
+                ),
                 CLAUDE_BLUE,
             )
         };
@@ -389,8 +434,17 @@ mod tests {
 
     #[test]
     fn a_window_at_zero_draws_a_track_and_no_fill() {
-        let icon = render(Some(0.0), false, IndicatorStyle::Ring, ColorTheme::Claude, 64);
-        assert!(opaque_pixels(&icon) > 0, "the empty track still has to be visible");
+        let icon = render(
+            Some(0.0),
+            false,
+            IndicatorStyle::Ring,
+            ColorTheme::Claude,
+            64,
+        );
+        assert!(
+            opaque_pixels(&icon) > 0,
+            "the empty track still has to be visible"
+        );
         assert_eq!(colored_pixels(&icon, CLAUDE_BLUE), 0);
     }
 
@@ -408,13 +462,29 @@ mod tests {
         // Rounding a non-zero reading down to nothing is the bug this guards:
         // an empty-looking bar at 1% is indistinguishable from no data.
         let icon = render(Some(1.0), false, IndicatorStyle::Bar, ColorTheme::Usage, 64);
-        assert!(colored_pixels(&icon, GREEN) > 20, "{}", colored_pixels(&icon, GREEN));
+        assert!(
+            colored_pixels(&icon, GREEN) > 20,
+            "{}",
+            colored_pixels(&icon, GREEN)
+        );
     }
 
     #[test]
     fn a_stale_reading_is_dimmed_rather_than_hidden() {
-        let fresh = render(Some(60.0), false, IndicatorStyle::Ring, ColorTheme::Claude, 64);
-        let stale = render(Some(60.0), true, IndicatorStyle::Ring, ColorTheme::Claude, 64);
+        let fresh = render(
+            Some(60.0),
+            false,
+            IndicatorStyle::Ring,
+            ColorTheme::Claude,
+            64,
+        );
+        let stale = render(
+            Some(60.0),
+            true,
+            IndicatorStyle::Ring,
+            ColorTheme::Claude,
+            64,
+        );
         assert!(opaque_pixels(&stale) > 0);
         // Same geometry, weaker ink.
         assert!(colored_pixels(&stale, CLAUDE_BLUE) < colored_pixels(&fresh, CLAUDE_BLUE));
@@ -422,8 +492,20 @@ mod tests {
 
     #[test]
     fn an_overage_reading_does_not_wrap_the_ring_past_full() {
-        let full = render(Some(100.0), false, IndicatorStyle::Ring, ColorTheme::Usage, 64);
-        let over = render(Some(140.0), false, IndicatorStyle::Ring, ColorTheme::Usage, 64);
+        let full = render(
+            Some(100.0),
+            false,
+            IndicatorStyle::Ring,
+            ColorTheme::Usage,
+            64,
+        );
+        let over = render(
+            Some(140.0),
+            false,
+            IndicatorStyle::Ring,
+            ColorTheme::Usage,
+            64,
+        );
         assert_eq!(colored_pixels(&full, RED), colored_pixels(&over, RED));
     }
 }

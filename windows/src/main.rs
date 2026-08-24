@@ -49,7 +49,10 @@ fn main() {
             println!("executable   {}", exe().display());
             println!("claude home  {}", paths::claude_home().display());
             println!("settings     {}", paths::settings_file().display());
-            println!("cache        {}", claude_quota::status_line_cache::cache_path().display());
+            println!(
+                "cache        {}",
+                claude_quota::status_line_cache::cache_path().display()
+            );
             0
         }
         "--help" | "-h" | "help" => {

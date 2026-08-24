@@ -12,7 +12,9 @@ use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 
 use crate::credentials;
-use crate::snapshot::{UsageEntry, UsageError, UsageSnapshot, UsageSource, UsageWindow, UsageWindowKind};
+use crate::snapshot::{
+    UsageEntry, UsageError, UsageSnapshot, UsageSource, UsageWindow, UsageWindowKind,
+};
 
 const ENDPOINT: &str = "https://api.anthropic.com/api/oauth/usage";
 const BETA_HEADER: &str = "oauth-2025-04-20";
@@ -45,7 +47,9 @@ impl OAuthUsageClient {
             .http_status_as_error(false)
             .user_agent(USER_AGENT)
             .build();
-        Self { agent: config.into() }
+        Self {
+            agent: config.into(),
+        }
     }
 
     pub fn fetch(&self) -> Result<UsageSnapshot, Failure> {
@@ -58,15 +62,21 @@ impl OAuthUsageClient {
         let mut response = self
             .agent
             .get(ENDPOINT)
-            .header("Authorization", &format!("Bearer {}", credentials.access_token))
+            .header(
+                "Authorization",
+                &format!("Bearer {}", credentials.access_token),
+            )
             .header("anthropic-beta", BETA_HEADER)
             .header("Accept", "application/json")
             .call()
             .map_err(|error| Failure::Transport(UsageError::Network(error.to_string())))?;
 
         let status = response.status().as_u16();
-        let retry_after =
-            response.headers().get("retry-after").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
 
         match status {
             200 => {
@@ -74,8 +84,7 @@ impl OAuthUsageClient {
                     .body_mut()
                     .read_to_string()
                     .map_err(|error| Failure::Transport(UsageError::Network(error.to_string())))?;
-                let mut snapshot =
-                    parse(&body).ok_or(Failure::Transport(UsageError::NoData))?;
+                let mut snapshot = parse(&body).ok_or(Failure::Transport(UsageError::NoData))?;
                 // The plan badge isn't in the payload -- it rides on the
                 // credential we just used, so stamp it here rather than
                 // reading the credential file a second time from the view.
@@ -86,9 +95,13 @@ impl OAuthUsageClient {
             // Returned for accounts without subscription-backed windows.
             404 => Err(Failure::Credentials(UsageError::NotSubscribed)),
             429 => Err(Failure::Transport(UsageError::RateLimited {
-                retry_at: retry_after.as_deref().and_then(|value| retry_date(value, Utc::now())),
+                retry_at: retry_after
+                    .as_deref()
+                    .and_then(|value| retry_date(value, Utc::now())),
             })),
-            other => Err(Failure::Transport(UsageError::Network(format!("HTTP {other}")))),
+            other => Err(Failure::Transport(UsageError::Network(format!(
+                "HTTP {other}"
+            )))),
         }
     }
 }
@@ -122,8 +135,10 @@ pub fn parse(body: &str) -> Option<UsageSnapshot> {
     }
 
     let mut snapshot = UsageSnapshot::new(windows, Utc::now(), UsageSource::OAuth);
-    snapshot.extra_usage_enabled =
-        root.get("extra_usage").and_then(|extra| extra.get("is_enabled")).and_then(Value::as_bool);
+    snapshot.extra_usage_enabled = root
+        .get("extra_usage")
+        .and_then(|extra| extra.get("is_enabled"))
+        .and_then(Value::as_bool);
     Some(snapshot)
 }
 
@@ -139,7 +154,9 @@ fn limit_kind(name: &str) -> Option<UsageWindowKind> {
 }
 
 pub fn parse_limits(value: Option<&Value>) -> Vec<UsageEntry> {
-    let Some(Value::Array(entries)) = value else { return Vec::new() };
+    let Some(Value::Array(entries)) = value else {
+        return Vec::new();
+    };
     entries
         .iter()
         .filter_map(|entry| {
@@ -164,17 +181,20 @@ pub fn parse_limits(value: Option<&Value>) -> Vec<UsageEntry> {
 /// read here: those come back null now that scoped windows arrive through
 /// `limits`.
 pub fn parse_top_level_windows(root: &serde_json::Map<String, Value>) -> Vec<UsageEntry> {
-    [(UsageWindowKind::FiveHour, "five_hour"), (UsageWindowKind::SevenDay, "seven_day")]
-        .into_iter()
-        .filter_map(|(kind, key)| {
-            let object = root.get(key)?;
-            let utilization = decode_number(object.get("utilization"))?;
-            Some(UsageEntry::new(
-                kind,
-                UsageWindow::new(utilization, decode_date(object.get("resets_at"))),
-            ))
-        })
-        .collect()
+    [
+        (UsageWindowKind::FiveHour, "five_hour"),
+        (UsageWindowKind::SevenDay, "seven_day"),
+    ]
+    .into_iter()
+    .filter_map(|(kind, key)| {
+        let object = root.get(key)?;
+        let utilization = decode_number(object.get("utilization"))?;
+        Some(UsageEntry::new(
+            kind,
+            UsageWindow::new(utilization, decode_date(object.get("resets_at"))),
+        ))
+    })
+    .collect()
 }
 
 /// `percent` is an integer while `utilization` is a real, so accept either.
@@ -203,7 +223,9 @@ pub fn decode_date(value: Option<&Value>) -> Option<DateTime<Utc>> {
     }
     // Handles both the fractional-seconds form and the plain one, and any
     // offset -- normalised to UTC.
-    DateTime::parse_from_rfc3339(text).ok().map(|date| date.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|date| date.with_timezone(&Utc))
 }
 
 #[cfg(test)]
@@ -227,9 +249,25 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(snapshot.windows.len(), 3, "the unknown kind is skipped, not guessed at");
-        assert_eq!(snapshot.window(UsageWindowKind::FiveHour).unwrap().used_percentage, 23.0);
-        assert_eq!(snapshot.window(UsageWindowKind::SevenDay).unwrap().used_percentage, 41.2);
+        assert_eq!(
+            snapshot.windows.len(),
+            3,
+            "the unknown kind is skipped, not guessed at"
+        );
+        assert_eq!(
+            snapshot
+                .window(UsageWindowKind::FiveHour)
+                .unwrap()
+                .used_percentage,
+            23.0
+        );
+        assert_eq!(
+            snapshot
+                .window(UsageWindowKind::SevenDay)
+                .unwrap()
+                .used_percentage,
+            41.2
+        );
         let scoped = snapshot.window(UsageWindowKind::WeeklyScoped).unwrap();
         assert_eq!(scoped.scope_label.as_deref(), Some("Fable"));
         assert_eq!(snapshot.extra_usage_enabled, Some(true));
@@ -244,9 +282,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(snapshot.windows.len(), 2);
-        assert_eq!(snapshot.window(UsageWindowKind::FiveHour).unwrap().used_percentage, 23.5);
         assert_eq!(
-            snapshot.window(UsageWindowKind::FiveHour).unwrap().resets_at.unwrap().timestamp(),
+            snapshot
+                .window(UsageWindowKind::FiveHour)
+                .unwrap()
+                .used_percentage,
+            23.5
+        );
+        assert_eq!(
+            snapshot
+                .window(UsageWindowKind::FiveHour)
+                .unwrap()
+                .resets_at
+                .unwrap()
+                .timestamp(),
             1_738_425_600
         );
     }
@@ -256,7 +305,13 @@ mod tests {
         // The legacy CLI headers used 0-1. If that scale ever leaked in here a
         // 41.2% window would render as 41 hundredths of a percent.
         let snapshot = parse(r#"{"limits": [{"kind": "weekly_all", "percent": 41.2}]}"#).unwrap();
-        assert!(snapshot.window(UsageWindowKind::SevenDay).unwrap().used_percentage > 1.0);
+        assert!(
+            snapshot
+                .window(UsageWindowKind::SevenDay)
+                .unwrap()
+                .used_percentage
+                > 1.0
+        );
     }
 
     #[test]
@@ -271,7 +326,13 @@ mod tests {
     #[test]
     fn a_window_sitting_at_zero_percent_is_kept_not_dropped() {
         let snapshot = parse(r#"{"limits": [{"kind": "session", "percent": 0}]}"#).unwrap();
-        assert_eq!(snapshot.window(UsageWindowKind::FiveHour).unwrap().used_percentage, 0.0);
+        assert_eq!(
+            snapshot
+                .window(UsageWindowKind::FiveHour)
+                .unwrap()
+                .used_percentage,
+            0.0
+        );
     }
 
     #[test]
@@ -288,8 +349,7 @@ mod tests {
         assert_eq!(epoch.timestamp(), 1_738_425_600);
 
         let plain = decode_date(Some(&serde_json::json!("2026-08-24T18:00:00Z"))).unwrap();
-        let fractional =
-            decode_date(Some(&serde_json::json!("2026-08-24T18:00:00.512Z"))).unwrap();
+        let fractional = decode_date(Some(&serde_json::json!("2026-08-24T18:00:00.512Z"))).unwrap();
         assert_eq!(plain.timestamp(), fractional.timestamp());
 
         let offset = decode_date(Some(&serde_json::json!("2026-08-24T20:00:00+02:00"))).unwrap();
@@ -308,7 +368,10 @@ mod tests {
     fn retry_after_reads_as_seconds_or_as_an_http_date() {
         let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
         assert_eq!(retry_date("120", now).unwrap().timestamp(), 1_700_000_120);
-        assert_eq!(retry_date("  120  ", now).unwrap().timestamp(), 1_700_000_120);
+        assert_eq!(
+            retry_date("  120  ", now).unwrap().timestamp(),
+            1_700_000_120
+        );
 
         let date = retry_date("Sun, 06 Nov 1994 08:49:37 GMT", now).unwrap();
         assert_eq!(date.timestamp(), 784_111_777);

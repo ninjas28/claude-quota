@@ -28,7 +28,9 @@ pub fn app_data() -> PathBuf {
             return PathBuf::from(override_path);
         }
     }
-    dirs::config_dir().unwrap_or_else(|| home().join("AppData").join("Roaming")).join("ClaudeQuota")
+    dirs::config_dir()
+        .unwrap_or_else(|| home().join("AppData").join("Roaming"))
+        .join("ClaudeQuota")
 }
 
 pub fn settings_file() -> PathBuf {

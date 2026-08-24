@@ -79,7 +79,11 @@ fn short_path(path: &Path) -> Option<String> {
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::GetShortPathNameW;
 
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let mut buffer = vec![0u16; 512];
     // SAFETY: `wide` is NUL-terminated and `buffer` is described by its length.
     let written =
@@ -88,7 +92,11 @@ fn short_path(path: &Path) -> Option<String> {
         return None;
     }
     buffer.truncate(written);
-    Some(std::ffi::OsString::from_wide(&buffer).to_string_lossy().into_owned())
+    Some(
+        std::ffi::OsString::from_wide(&buffer)
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 #[cfg(not(windows))]
@@ -139,7 +147,8 @@ pub fn apply(exe: &Path, settings_path: &Path, ours_path: &Path) -> Result<Plan,
     let plan = plan(current.as_deref(), ours.chain.as_deref(), &command);
 
     ours.chain = plan.chained.clone();
-    ours.save_to(ours_path).map_err(|error| format!("could not save our settings: {error}"))?;
+    ours.save_to(ours_path)
+        .map_err(|error| format!("could not save our settings: {error}"))?;
 
     claude["statusLine"] = json!({"type": "command", "command": command});
     save(settings_path, &claude)?;
@@ -159,7 +168,8 @@ pub fn remove(settings_path: &Path, ours_path: &Path) -> Result<Option<String>, 
 
     let mut ours = Settings::load_from(ours_path);
     let restored = ours.chain.take();
-    ours.save_to(ours_path).map_err(|error| format!("could not save our settings: {error}"))?;
+    ours.save_to(ours_path)
+        .map_err(|error| format!("could not save our settings: {error}"))?;
 
     match &restored {
         Some(previous) => {
@@ -176,7 +186,11 @@ pub fn remove(settings_path: &Path, ours_path: &Path) -> Result<Option<String>, 
 }
 
 fn current_command(claude: &Value) -> Option<String> {
-    claude.get("statusLine")?.get("command")?.as_str().map(str::to_string)
+    claude
+        .get("statusLine")?
+        .get("command")?
+        .as_str()
+        .map(str::to_string)
 }
 
 fn load(path: &Path) -> Result<Value, String> {
@@ -214,16 +228,33 @@ mod tests {
 
     #[test]
     fn the_command_uses_forward_slashes_and_no_quoting() {
-        let command = install_command(Path::new(r"C:\Users\tn\AppData\Local\ClaudeQuota\claude-quota.exe"))
-            .unwrap();
-        assert_eq!(command, "C:/Users/tn/AppData/Local/ClaudeQuota/claude-quota.exe statusline");
+        let command = install_command(Path::new(
+            r"C:\Users\tn\AppData\Local\ClaudeQuota\claude-quota.exe",
+        ))
+        .unwrap();
+        assert_eq!(
+            command,
+            "C:/Users/tn/AppData/Local/ClaudeQuota/claude-quota.exe statusline"
+        );
 
         // Every one of these breaks under one shell or the other.
-        assert!(!command.contains('\\'), "Git Bash eats backslashes: {command}");
-        assert!(!command.contains('"'), "PowerShell will not execute a quoted path: {command}");
+        assert!(
+            !command.contains('\\'),
+            "Git Bash eats backslashes: {command}"
+        );
+        assert!(
+            !command.contains('"'),
+            "PowerShell will not execute a quoted path: {command}"
+        );
         assert!(!command.contains('\''), "{command}");
-        assert!(!command.contains('&'), "Git Bash cannot run PowerShell's call operator");
-        assert!(!command.contains('='), "a VAR=value prefix is bash-only syntax");
+        assert!(
+            !command.contains('&'),
+            "Git Bash cannot run PowerShell's call operator"
+        );
+        assert!(
+            !command.contains('='),
+            "a VAR=value prefix is bash-only syntax"
+        );
         assert!(!command.contains(' ') || command.matches(' ').count() == 1);
     }
 
@@ -232,10 +263,15 @@ mod tests {
         // On a machine where 8.3 names are disabled there is nothing we can
         // write that works, and a silently broken status line is worse than a
         // message saying so.
-        let result = install_command(Path::new(r"C:\Program Files\No Short Name\claude-quota.exe"));
+        let result = install_command(Path::new(
+            r"C:\Program Files\No Short Name\claude-quota.exe",
+        ));
         if let Ok(command) = &result {
             // 8.3 was available; then it must have produced a space-free path.
-            assert!(!command.trim_end_matches(" statusline").contains(' '), "{command}");
+            assert!(
+                !command.trim_end_matches(" statusline").contains(' '),
+                "{command}"
+            );
         } else {
             assert!(matches!(result, Err(CommandError::UnquotablePath(_))));
         }
@@ -243,13 +279,22 @@ mod tests {
 
     #[test]
     fn our_own_command_is_recognisable_wherever_it_was_installed() {
-        assert!(is_ours("C:/Users/tn/AppData/Local/ClaudeQuota/claude-quota.exe statusline"));
-        assert!(is_ours("C:/USERS/TN/CLAUDEQUOTA/CLAUDE-QUOTA.EXE STATUSLINE"));
+        assert!(is_ours(
+            "C:/Users/tn/AppData/Local/ClaudeQuota/claude-quota.exe statusline"
+        ));
+        assert!(is_ours(
+            "C:/USERS/TN/CLAUDEQUOTA/CLAUDE-QUOTA.EXE STATUSLINE"
+        ));
         // The macOS bridge, in case someone shares a settings file.
-        assert!(is_ours("python ~/src/claude-quota/statusline/claude-quota-statusline.py"));
+        assert!(is_ours(
+            "python ~/src/claude-quota/statusline/claude-quota-statusline.py"
+        ));
 
         assert!(!is_ours("powershell -File C:/me/status.ps1"));
-        assert!(!is_ours("claude-quota.exe"), "the app itself is not the bridge");
+        assert!(
+            !is_ours("claude-quota.exe"),
+            "the app itself is not the bridge"
+        );
     }
 
     #[test]
@@ -259,7 +304,10 @@ mod tests {
             None,
             "C:/x/claude-quota.exe statusline",
         );
-        assert_eq!(plan.chained.as_deref(), Some("powershell -File C:/me/status.ps1"));
+        assert_eq!(
+            plan.chained.as_deref(),
+            Some("powershell -File C:/me/status.ps1")
+        );
         assert!(!plan.already_installed);
     }
 
@@ -276,8 +324,11 @@ mod tests {
 
     #[test]
     fn reinstalling_at_a_new_path_repairs_the_command_and_keeps_the_chain() {
-        let installed =
-            plan(Some("C:/old/claude-quota.exe statusline"), Some("my-status"), "C:/new/claude-quota.exe statusline");
+        let installed = plan(
+            Some("C:/old/claude-quota.exe statusline"),
+            Some("my-status"),
+            "C:/new/claude-quota.exe statusline",
+        );
         assert_eq!(installed.command, "C:/new/claude-quota.exe statusline");
         assert_eq!(installed.chained.as_deref(), Some("my-status"));
         assert!(!installed.already_installed);
@@ -308,15 +359,20 @@ mod tests {
         let plan = apply(Path::new("C:/x/claude-quota.exe"), &path, &ours).unwrap();
         assert_eq!(plan.chained.as_deref(), Some("my-status"));
 
-        let written: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(written["model"], "opus");
-        assert_eq!(written["statusLine"]["command"], "C:/x/claude-quota.exe statusline");
+        assert_eq!(
+            written["statusLine"]["command"],
+            "C:/x/claude-quota.exe statusline"
+        );
         assert!(path.with_extension("json.quota-backup").exists());
 
         // ...and removing puts the user's own command back.
         let restored = remove(&path, &ours).unwrap();
         assert_eq!(restored.as_deref(), Some("my-status"));
-        let written: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(written["statusLine"]["command"], "my-status");
         assert_eq!(written["model"], "opus");
     }
@@ -330,7 +386,8 @@ mod tests {
         apply(Path::new("C:/x/claude-quota.exe"), &path, &ours).unwrap();
         assert_eq!(remove(&path, &ours).unwrap(), None);
 
-        let written: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(written.get("statusLine").is_none());
         assert_eq!(written["model"], "opus");
     }
@@ -351,15 +408,24 @@ mod tests {
         let ours = directory.path().join("ours.json");
         apply(Path::new("C:/x/claude-quota.exe"), &path, &ours).unwrap();
 
-        let written: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(written["statusLine"]["command"], "C:/x/claude-quota.exe statusline");
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            written["statusLine"]["command"],
+            "C:/x/claude-quota.exe statusline"
+        );
     }
 
     #[test]
     fn a_settings_file_we_cannot_parse_is_reported_rather_than_overwritten() {
         let (_directory, path) = with_claude_settings("{ not json");
         let ours = tempfile::tempdir().unwrap();
-        assert!(apply(Path::new("C:/x/claude-quota.exe"), &path, &ours.path().join("o.json")).is_err());
+        assert!(apply(
+            Path::new("C:/x/claude-quota.exe"),
+            &path,
+            &ours.path().join("o.json")
+        )
+        .is_err());
         // Still exactly as the user left it.
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
     }

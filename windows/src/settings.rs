@@ -19,8 +19,11 @@ pub enum BarDisplayMode {
 }
 
 impl BarDisplayMode {
-    pub const ALL: [BarDisplayMode; 3] =
-        [BarDisplayMode::Session, BarDisplayMode::Weekly, BarDisplayMode::Worst];
+    pub const ALL: [BarDisplayMode; 3] = [
+        BarDisplayMode::Session,
+        BarDisplayMode::Weekly,
+        BarDisplayMode::Worst,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -65,8 +68,11 @@ pub enum IndicatorStyle {
 }
 
 impl IndicatorStyle {
-    pub const ALL: [IndicatorStyle; 3] =
-        [IndicatorStyle::Ring, IndicatorStyle::Bar, IndicatorStyle::Number];
+    pub const ALL: [IndicatorStyle; 3] = [
+        IndicatorStyle::Ring,
+        IndicatorStyle::Bar,
+        IndicatorStyle::Number,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {

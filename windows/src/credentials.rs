@@ -42,14 +42,20 @@ impl ClaudeCredentials {
     }
 
     pub fn plan_label(&self) -> Option<String> {
-        plan_label(self.subscription_type.as_deref(), self.rate_limit_tier.as_deref())
+        plan_label(
+            self.subscription_type.as_deref(),
+            self.rate_limit_tier.as_deref(),
+        )
     }
 }
 
 /// The plan badge Claude's own usage screen shows, rebuilt from what the
 /// credential happens to carry: `default_claude_max_5x` -> "Max (5x)".
 /// Falls back to `subscription_type` when the tier is missing or unfamiliar.
-pub fn plan_label(subscription_type: Option<&str>, rate_limit_tier: Option<&str>) -> Option<String> {
+pub fn plan_label(
+    subscription_type: Option<&str>,
+    rate_limit_tier: Option<&str>,
+) -> Option<String> {
     if let Some(tier) = rate_limit_tier {
         let tier = tier.to_lowercase();
         if !tier.is_empty() {
@@ -75,7 +81,11 @@ pub fn plan_label(subscription_type: Option<&str>, rate_limit_tier: Option<&str>
                 }
             }
 
-            let name = parts.iter().map(|p| capitalized(p)).collect::<Vec<_>>().join(" ");
+            let name = parts
+                .iter()
+                .map(|p| capitalized(p))
+                .collect::<Vec<_>>()
+                .join(" ");
             if !name.is_empty() {
                 return Some(match multiplier {
                     Some(multiplier) => format!("{} ({})", name, multiplier),
@@ -145,7 +155,10 @@ pub fn parse(data: &str) -> Option<ClaudeCredentials> {
             .get("subscriptionType")
             .and_then(Value::as_str)
             .map(str::to_string),
-        rate_limit_tier: payload.get("rateLimitTier").and_then(Value::as_str).map(str::to_string),
+        rate_limit_tier: payload
+            .get("rateLimitTier")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 
@@ -183,7 +196,10 @@ mod tests {
         // The real file on Windows carries `mcpOAuth` entries for every plugin
         // the user has connected. None of those is the Claude.ai login, and
         // reading one as if it were would show someone else's quota.
-        assert_eq!(parse(r#"{"mcpOAuth": {"plugin:github|abc": {"accessToken": "gho_x"}}}"#), None);
+        assert_eq!(
+            parse(r#"{"mcpOAuth": {"plugin:github|abc": {"accessToken": "gho_x"}}}"#),
+            None
+        );
     }
 
     #[test]
@@ -204,7 +220,10 @@ mod tests {
             rate_limit_tier: None,
         };
         assert!(with_expiry(-1).is_expired_at(now));
-        assert!(with_expiry(29).is_expired_at(now), "inside the skew, so unusable");
+        assert!(
+            with_expiry(29).is_expired_at(now),
+            "inside the skew, so unusable"
+        );
         assert!(!with_expiry(31).is_expired_at(now));
     }
 
@@ -224,7 +243,10 @@ mod tests {
         // A plain Pro account reports `default_claude_ai`, which carries no
         // plan name at all -- stripping the prefixes leaves the bare word
         // "ai". Badging that account "Ai" is what this guards against.
-        assert_eq!(plan_label(Some("pro"), Some("default_claude_ai")).unwrap(), "Pro");
+        assert_eq!(
+            plan_label(Some("pro"), Some("default_claude_ai")).unwrap(),
+            "Pro"
+        );
         assert_eq!(plan_label(Some("max"), Some("claude_ai")).unwrap(), "Max");
         // Nothing to fall back to is better said with no badge than with "Ai".
         assert_eq!(plan_label(None, Some("default_claude_ai")), None);
@@ -237,11 +259,20 @@ mod tests {
 
     #[test]
     fn plan_labels_are_rebuilt_from_whatever_the_credential_carries() {
-        assert_eq!(plan_label(None, Some("default_claude_max_5x")).unwrap(), "Max (5x)");
-        assert_eq!(plan_label(None, Some("default_claude_max_20x")).unwrap(), "Max (20x)");
+        assert_eq!(
+            plan_label(None, Some("default_claude_max_5x")).unwrap(),
+            "Max (5x)"
+        );
+        assert_eq!(
+            plan_label(None, Some("default_claude_max_20x")).unwrap(),
+            "Max (20x)"
+        );
         assert_eq!(plan_label(None, Some("default_claude_pro")).unwrap(), "Pro");
         // Unfamiliar tier: still better than nothing, just title-cased.
-        assert_eq!(plan_label(None, Some("enterprise_seat")).unwrap(), "Enterprise Seat");
+        assert_eq!(
+            plan_label(None, Some("enterprise_seat")).unwrap(),
+            "Enterprise Seat"
+        );
         // No tier at all: fall back to the subscription type.
         assert_eq!(plan_label(Some("max"), None).unwrap(), "Max");
         assert_eq!(plan_label(Some("max"), Some("")).unwrap(), "Max");

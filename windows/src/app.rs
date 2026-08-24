@@ -50,7 +50,11 @@ pub fn run() -> eframe::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(WINDOW_TITLE, options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+    eframe::run_native(
+        WINDOW_TITLE,
+        options,
+        Box::new(|cc| Ok(Box::new(App::new(cc)))),
+    )
 }
 
 /// The window's name outside settings. Not shown anywhere in the popover --
@@ -170,14 +174,17 @@ impl App {
         }
         let scale = ctx.pixels_per_point().max(0.5);
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(popover::WIDTH, height)));
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(
+            popover::WIDTH,
+            height,
+        )));
         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(
             position.0 / scale,
             position.1 / scale,
         )));
         self.placed = Some((height, position.0, position.1));
         self.placed_height = height;
-        crate::debug_log!("place {:?} h={height}", position);
+        crate::debug_log!("place at {:?} h={height} ppp={scale}", position);
     }
 
     /// Where a popover of this height belongs, relative to the tray click.
@@ -269,7 +276,10 @@ impl App {
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(width, height)));
-        ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(x / scale, y / scale)));
+        ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(
+            x / scale,
+            y / scale,
+        )));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
 
         crate::debug_log!("open settings at ({x}, {y})");
@@ -382,7 +392,9 @@ impl App {
         let fill = ui.ctx().global_style().visuals.window_fill;
         let changed = egui::CentralPanel::default()
             .frame(Frame::default().inner_margin(Margin::same(18)).fill(fill))
-            .show(ui, |ui| settings_window::show(ui, &mut settings, &mut autostart))
+            .show(ui, |ui| {
+                settings_window::show(ui, &mut settings, &mut autostart)
+            })
             .inner;
 
         if changed {
@@ -462,6 +474,10 @@ impl eframe::App for App {
         if self.mode == Mode::Popover {
             if let Some(measured) = self.measured_height.take() {
                 if (measured - self.placed_height).abs() > 2.0 {
+                    crate::debug_log!(
+                        "resize: measured {measured} vs placed {}",
+                        self.placed_height
+                    );
                     let position = self.popover_position(ctx, measured);
                     self.place_at(ctx, measured, position);
                     ctx.request_repaint();
@@ -495,8 +511,10 @@ impl eframe::App for App {
         // settings, which is a window you are meant to leave open while you
         // look at something else.
         if self.mode == Mode::Popover {
-            let settled =
-                self.shown_at.map(|at| at.elapsed() > Duration::from_millis(250)).unwrap_or(false);
+            let settled = self
+                .shown_at
+                .map(|at| at.elapsed() > Duration::from_millis(250))
+                .unwrap_or(false);
             if settled && self.ever_focused && !focused {
                 crate::debug_log!("dismiss: focus lost");
                 self.hide(ctx);

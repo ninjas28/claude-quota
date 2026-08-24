@@ -40,12 +40,17 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, launch_at_login: &mut bool) ->
     row(ui, "Colours", None, |ui| {
         ui.horizontal(|ui| {
             for theme in ColorTheme::ALL {
-                changed |=
-                    ui.selectable_value(&mut settings.color_theme, theme, theme.label()).changed();
+                changed |= ui
+                    .selectable_value(&mut settings.color_theme, theme, theme.label())
+                    .changed();
             }
         });
         ui.add_space(4.0);
-        ui.label(RichText::new(settings.color_theme.detail()).size(10.0).weak());
+        ui.label(
+            RichText::new(settings.color_theme.detail())
+                .size(10.0)
+                .weak(),
+        );
     });
 
     row(ui, "Tray shows", None, |ui| {
@@ -61,22 +66,27 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, launch_at_login: &mut bool) ->
             });
     });
 
-    row(ui, "Check every", Some("Only when the status line cache has gone stale."), |ui| {
-        egui::ComboBox::from_id_salt("poll-interval")
-            .selected_text(poll_interval::label(settings.poll_interval_seconds))
-            .width(220.0)
-            .show_ui(ui, |ui| {
-                for seconds in poll_interval::CHOICES {
-                    changed |= ui
-                        .selectable_value(
-                            &mut settings.poll_interval_seconds,
-                            seconds,
-                            poll_interval::label(seconds),
-                        )
-                        .changed();
-                }
-            });
-    });
+    row(
+        ui,
+        "Check every",
+        Some("Only when the status line cache has gone stale."),
+        |ui| {
+            egui::ComboBox::from_id_salt("poll-interval")
+                .selected_text(poll_interval::label(settings.poll_interval_seconds))
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for seconds in poll_interval::CHOICES {
+                        changed |= ui
+                            .selectable_value(
+                                &mut settings.poll_interval_seconds,
+                                seconds,
+                                poll_interval::label(seconds),
+                            )
+                            .changed();
+                    }
+                });
+        },
+    );
 
     row(
         ui,
@@ -87,14 +97,24 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, launch_at_login: &mut bool) ->
         ),
         |ui| {
             changed |= ui
-                .checkbox(&mut settings.oauth_fallback_enabled, "Use the usage API fallback")
+                .checkbox(
+                    &mut settings.oauth_fallback_enabled,
+                    "Use the usage API fallback",
+                )
                 .changed();
         },
     );
 
-    row(ui, "Launch at login", Some("Registers under the per-user Run key."), |ui| {
-        changed |= ui.checkbox(launch_at_login, "Start Claude Quota with Windows").changed();
-    });
+    row(
+        ui,
+        "Launch at login",
+        Some("Registers under the per-user Run key."),
+        |ui| {
+            changed |= ui
+                .checkbox(launch_at_login, "Start Claude Quota with Windows")
+                .changed();
+        },
+    );
 
     ui.add_space(8.0);
     ui.separator();

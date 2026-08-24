@@ -12,10 +12,10 @@
 //! app. `tests::reads_exactly_what_the_python_bridge_writes` is what keeps that
 //! promise honest.
 
-use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::Value;
+use std::path::PathBuf;
 
 use crate::oauth::{decode_date, decode_number};
 use crate::snapshot::{UsageEntry, UsageSnapshot, UsageSource, UsageWindow, UsageWindowKind};
@@ -56,18 +56,20 @@ pub fn read_at(path: &std::path::Path) -> Option<(UsageSnapshot, Context)> {
     let root: Value = serde_json::from_str(&data).ok()?;
     let root = root.as_object()?;
 
-    let windows: Vec<UsageEntry> =
-        [(UsageWindowKind::FiveHour, "five_hour"), (UsageWindowKind::SevenDay, "seven_day")]
-            .into_iter()
-            .filter_map(|(kind, key)| {
-                let object = root.get(key)?;
-                let used = decode_number(object.get("used_percentage"))?;
-                Some(UsageEntry::new(
-                    kind,
-                    UsageWindow::new(used, decode_date(object.get("resets_at"))),
-                ))
-            })
-            .collect();
+    let windows: Vec<UsageEntry> = [
+        (UsageWindowKind::FiveHour, "five_hour"),
+        (UsageWindowKind::SevenDay, "seven_day"),
+    ]
+    .into_iter()
+    .filter_map(|(kind, key)| {
+        let object = root.get(key)?;
+        let used = decode_number(object.get("used_percentage"))?;
+        Some(UsageEntry::new(
+            kind,
+            UsageWindow::new(used, decode_date(object.get("resets_at"))),
+        ))
+    })
+    .collect();
 
     if windows.is_empty() {
         return None;
@@ -80,8 +82,14 @@ pub fn read_at(path: &std::path::Path) -> Option<(UsageSnapshot, Context)> {
 
     let snapshot = UsageSnapshot::new(windows, captured_at, UsageSource::StatusLine);
     let context = Context {
-        model: root.get("model").and_then(Value::as_str).map(str::to_string),
-        session_id: root.get("session_id").and_then(Value::as_str).map(str::to_string),
+        model: root
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        session_id: root
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     };
     Some((snapshot, context))
 }
@@ -106,20 +114,23 @@ impl CacheFileWatcher {
     /// must not touch the UI directly -- the model posts a wake-up and lets its
     /// own thread do the reading.
     pub fn start(on_change: impl Fn() + Send + 'static) -> notify::Result<Self> {
-        let directory =
-            cache_path().parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+        let directory = cache_path()
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
         let _ = std::fs::create_dir_all(&directory);
 
         let target = cache_path();
-        let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            let Ok(event) = event else { return };
-            // ReadDirectoryChangesW reports every file in `~/.claude`, which is
-            // a busy directory -- Claude Code rewrites history, sessions, and
-            // caches constantly. Only our file is worth waking the UI for.
-            if event.paths.iter().any(|path| path == &target) {
-                on_change();
-            }
-        })?;
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                let Ok(event) = event else { return };
+                // ReadDirectoryChangesW reports every file in `~/.claude`, which is
+                // a busy directory -- Claude Code rewrites history, sessions, and
+                // caches constantly. Only our file is worth waking the UI for.
+                if event.paths.iter().any(|path| path == &target) {
+                    on_change();
+                }
+            })?;
         watcher.watch(&directory, RecursiveMode::NonRecursive)?;
         Ok(Self { _watcher: watcher })
     }
@@ -152,10 +163,27 @@ mod tests {
         );
 
         let (snapshot, context) = read_at(&path).unwrap();
-        assert_eq!(snapshot.window(UsageWindowKind::FiveHour).unwrap().used_percentage, 23.5);
-        assert_eq!(snapshot.window(UsageWindowKind::SevenDay).unwrap().used_percentage, 41.2);
         assert_eq!(
-            snapshot.window(UsageWindowKind::FiveHour).unwrap().resets_at.unwrap().timestamp(),
+            snapshot
+                .window(UsageWindowKind::FiveHour)
+                .unwrap()
+                .used_percentage,
+            23.5
+        );
+        assert_eq!(
+            snapshot
+                .window(UsageWindowKind::SevenDay)
+                .unwrap()
+                .used_percentage,
+            41.2
+        );
+        assert_eq!(
+            snapshot
+                .window(UsageWindowKind::FiveHour)
+                .unwrap()
+                .resets_at
+                .unwrap()
+                .timestamp(),
             1_738_425_600
         );
         assert_eq!(snapshot.captured_at.timestamp(), 1_700_000_000);
