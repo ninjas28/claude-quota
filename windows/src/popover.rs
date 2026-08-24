@@ -29,6 +29,20 @@ mod column {
 
 const BAR_HEIGHT: f32 = 7.0;
 const PADDING: f32 = 16.0;
+/// The breathing room either side of the bar, between it and the label column
+/// on the left and the percentage column on the right.
+const GAP: f32 = 10.0;
+
+/// How wide the bar can be, given what is left of the row when it starts.
+///
+/// Everything still to be placed after the bar has to be reserved here: the gap
+/// before the percentage column, the column itself, *and* the right margin.
+/// Missing any one of them does not clip anything -- it silently eats into the
+/// margin, and the popover ends up with less padding on the right than on every
+/// other side.
+fn bar_width(available: f32) -> f32 {
+    (available - GAP - column::PERCENTAGE - PADDING).max(20.0)
+}
 
 /// What the user clicked, handed back for the caller to act on -- the popover
 /// itself owns no model.
@@ -72,6 +86,10 @@ pub fn show(ui: &mut Ui, state: &State, now: DateTime<Utc>) -> Rendered {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(PADDING);
+                    // A frameless button still carries its padding, which would
+                    // hold the glyph a few points further in than the heading
+                    // on the left sits out.
+                    ui.spacing_mut().button_padding = Vec2::ZERO;
                     let refresh = ui.add_enabled(
                         !state.is_refreshing,
                         egui::Button::new(RichText::new("\u{27f3}").size(14.0)).frame(false),
@@ -186,12 +204,10 @@ fn window_row(ui: &mut Ui, entry: &UsageEntry, stale: bool, theme: ColorTheme, n
             },
         );
 
-        ui.add_space(10.0);
-        let bar_width =
-            ui.available_width() - column::PERCENTAGE - PADDING - ui.spacing().item_spacing.x;
-        usage_bar(ui, percentage, stale, theme, bar_width.max(20.0));
+        ui.add_space(GAP);
+        usage_bar(ui, percentage, stale, theme, bar_width(ui.available_width()));
 
-        ui.add_space(10.0);
+        ui.add_space(GAP);
         ui.allocate_ui_with_layout(
             Vec2::new(column::PERCENTAGE, 16.0),
             Layout::right_to_left(Align::Center),
@@ -373,6 +389,33 @@ mod tests {
 
     fn state_with(windows: Vec<UsageEntry>) -> State {
         State::preview(UsageSnapshot::new(windows, now(), UsageSource::OAuth))
+    }
+
+    /// Where a row's right edge lands, laid out the way `window_row` lays it
+    /// out: left margin, label column, gap, bar, gap, percentage column.
+    fn row_right_edge(total_width: f32) -> f32 {
+        let after_label = total_width - PADDING - column::LABEL - GAP;
+        PADDING + column::LABEL + GAP + bar_width(after_label) + GAP + column::PERCENTAGE
+    }
+
+    #[test]
+    fn a_row_leaves_the_same_margin_on_the_right_as_on_the_left() {
+        // The bug this pins: reserving PADDING for the right margin but then
+        // spending GAP of it on the space before the percentage column, which
+        // left 6pt on the right against 16pt everywhere else.
+        for width in [WIDTH, 380.0, 500.0] {
+            let margin = width - row_right_edge(width);
+            assert!(
+                (margin - PADDING).abs() < 0.01,
+                "at {width}pt wide the right margin was {margin}, not {PADDING}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bar_never_collapses_however_narrow_the_popover_gets() {
+        assert!(bar_width(0.0) >= 20.0);
+        assert!(bar_width(-500.0) >= 20.0);
     }
 
     #[test]
