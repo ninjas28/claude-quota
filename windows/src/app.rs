@@ -273,6 +273,15 @@ impl App {
         ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
         ctx.send_viewport_cmd(ViewportCommand::WindowLevel(WindowLevel::Normal));
         ctx.send_viewport_cmd(ViewportCommand::Title("Claude Quota Settings".to_string()));
+        // The settings layout is a fixed size. Leaving the maximize button live
+        // on a window that cannot use the space just invites someone to click
+        // it and find the controls stranded in one corner.
+        ctx.send_viewport_cmd(ViewportCommand::Resizable(false));
+        ctx.send_viewport_cmd(ViewportCommand::EnableButtons {
+            close: true,
+            minimized: true,
+            maximize: false,
+        });
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(width, height)));

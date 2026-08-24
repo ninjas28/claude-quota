@@ -47,6 +47,9 @@ features = [
 ]
 
 [dev-dependencies]
+# Only for writing the README's indicator strip; see `render_the_indicator_strip`
+# in src/gauge.rs. Kept out of the binary, which never encodes a PNG.
+image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3"
 
 [profile.release]

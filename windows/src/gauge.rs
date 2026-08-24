@@ -78,7 +78,18 @@ pub fn render(
     }
 
     Icon {
-        rgba: pixmap.take(),
+        // Straight alpha, not premultiplied. `Pixmap` stores premultiplied
+        // pixels and `Shell_NotifyIcon` expects the other kind: handing over
+        // the raw buffer darkens every antialiased edge in proportion to how
+        // transparent it is, which is most of a ring's outline.
+        rgba: pixmap
+            .pixels()
+            .iter()
+            .flat_map(|pixel| {
+                let color = pixel.demultiply();
+                [color.red(), color.green(), color.blue(), color.alpha()]
+            })
+            .collect(),
         size,
     }
 }
@@ -362,19 +373,104 @@ mod tests {
     }
 
     fn colored_pixels(icon: &Icon, expected: [u8; 3]) -> usize {
-        // Premultiplied and antialiased, so compare hue by ratio rather than
-        // by exact value: every fill pixel of one colour scales together.
+        // Straight alpha, so a solid pixel carries its colour verbatim however
+        // faint it is. Only the near-opaque ones are counted, to keep
+        // antialiased edges from being read as fill.
         icon.rgba
             .chunks_exact(4)
             .filter(|pixel| {
-                let alpha = pixel[3] as f32 / 255.0;
-                alpha > 0.9
+                pixel[3] > 229
                     && (0..3).all(|channel| {
-                        let want = expected[channel] as f32 * alpha;
-                        (pixel[channel] as f32 - want).abs() < 12.0
+                        (pixel[channel] as i32 - expected[channel] as i32).abs() < 12
                     })
             })
             .count()
+    }
+
+    #[test]
+    fn the_buffer_uses_straight_alpha_not_premultiplied() {
+        // A half-transparent pixel of a bright colour keeps that colour under
+        // straight alpha, and is dragged towards black under premultiplied.
+        // Getting this wrong dims every antialiased edge of the icon.
+        let stale = render(
+            Some(100.0),
+            true,
+            IndicatorStyle::Bar,
+            ColorTheme::Claude,
+            64,
+        );
+        let brightest = stale
+            .rgba
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0)
+            .map(|pixel| pixel[2] as u32)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            brightest >= CLAUDE_BLUE[2] as u32 - 4,
+            "brightest blue was {brightest}, expected about {} -- looks premultiplied",
+            CLAUDE_BLUE[2]
+        );
+    }
+
+    /// Writes `docs/windows-indicators.png`: every indicator style, in both
+    /// colour themes, at three fill levels.
+    ///
+    /// Ignored by default because it writes into the repository rather than
+    /// asserting anything. Run it deliberately when the drawing changes:
+    ///
+    /// ```text
+    /// cargo test render_the_indicator_strip -- --ignored --nocapture
+    /// ```
+    ///
+    /// The macOS app renders its own README images the same way, off-screen
+    /// from a preview model -- a screenshot of an icon this small, scaled by
+    /// whatever the display happens to be, is never as honest as the pixels the
+    /// shell is actually handed.
+    #[test]
+    #[ignore = "writes docs/windows-indicators.png; run deliberately"]
+    fn render_the_indicator_strip() {
+        const ICON: u32 = 48;
+        const CELL: u32 = 64;
+
+        let columns: Vec<(ColorTheme, f64)> = [ColorTheme::Claude, ColorTheme::Usage]
+            .into_iter()
+            .flat_map(|theme| [15.0, 62.0, 93.0].map(|percent| (theme, percent)))
+            .collect();
+        let rows = IndicatorStyle::ALL;
+
+        let mut sheet =
+            image::RgbaImage::new(CELL * columns.len() as u32, CELL * rows.len() as u32);
+        let inset = (CELL - ICON) / 2;
+
+        for (row, style) in rows.iter().enumerate() {
+            for (column, (theme, percent)) in columns.iter().enumerate() {
+                let icon = render(Some(*percent), false, *style, *theme, ICON);
+                for y in 0..ICON {
+                    for x in 0..ICON {
+                        let at = ((y * ICON + x) * 4) as usize;
+                        sheet.put_pixel(
+                            column as u32 * CELL + inset + x,
+                            row as u32 * CELL + inset + y,
+                            image::Rgba([
+                                icon.rgba[at],
+                                icon.rgba[at + 1],
+                                icon.rgba[at + 2],
+                                icon.rgba[at + 3],
+                            ]),
+                        );
+                    }
+                }
+            }
+        }
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("docs")
+            .join("windows-indicators.png");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        sheet.save(&path).unwrap();
+        println!("wrote {}", path.display());
     }
 
     #[test]

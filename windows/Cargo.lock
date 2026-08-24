@@ -350,6 +350,7 @@ dependencies = [
  "dirs",
  "eframe",
  "egui",
+ "image",
  "notify",
  "raw-window-handle",
  "serde",

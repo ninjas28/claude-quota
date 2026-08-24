@@ -54,6 +54,8 @@ Code and could sign you out of it.
 
 ## Settings
 
+<img src="../docs/windows-indicators.png" width="384" alt="Ring, bar and number indicators in both colour themes at 15%, 62% and 93%">
+
 | | |
 |---|---|
 | Indicator | Ring, Bar, or Number |
