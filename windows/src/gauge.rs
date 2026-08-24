@@ -413,7 +413,7 @@ mod tests {
         );
     }
 
-    /// Writes `docs/windows-indicators.png`: every indicator style, in both
+    /// Writes `docs/indicators-windows.png`: every indicator style, in both
     /// colour themes, at three fill levels.
     ///
     /// Ignored by default because it writes into the repository rather than
@@ -428,7 +428,7 @@ mod tests {
     /// whatever the display happens to be, is never as honest as the pixels the
     /// shell is actually handed.
     #[test]
-    #[ignore = "writes docs/windows-indicators.png; run deliberately"]
+    #[ignore = "writes docs/indicators-windows.png; run deliberately"]
     fn render_the_indicator_strip() {
         const ICON: u32 = 48;
         const CELL: u32 = 64;
@@ -467,7 +467,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("docs")
-            .join("windows-indicators.png");
+            .join("indicators-windows.png");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         sheet.save(&path).unwrap();
         println!("wrote {}", path.display());

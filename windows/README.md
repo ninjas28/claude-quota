@@ -2,6 +2,8 @@
 
 Claude usage in the Windows notification area. Checking it doesn't cost quota.
 
+<img src="../docs/popover-dark-windows.png" width="420" alt="The popover, showing session and weekly usage with a countdown to each reset">
+
 ![Windows 10+](https://img.shields.io/badge/Windows-10%2B-black)
 ![MIT license](https://img.shields.io/badge/license-MIT-blue)
 
@@ -54,7 +56,7 @@ Code and could sign you out of it.
 
 ## Settings
 
-<img src="../docs/windows-indicators.png" width="384" alt="Ring, bar and number indicators in both colour themes at 15%, 62% and 93%">
+<img src="../docs/settings-dark-windows.png" width="460" alt="The settings window: indicator, colours, what the tray shows, how often to check, the usage API fallback, and launch at login">
 
 | | |
 |---|---|
@@ -66,6 +68,12 @@ Code and could sign you out of it.
 | Launch at login | Registers under `HKCU\...\CurrentVersion\Run` |
 
 Settings live in `%APPDATA%\ClaudeQuota\settings.json`.
+
+<img src="../docs/indicators-windows.png" width="384" alt="Ring, bar and number indicators in Claude blue and the usage ramp, at 15%, 62% and 93%">
+
+Ring, bar and number, in Claude blue and then the usage ramp, at 15%, 62% and
+93%. Drawn by the app rather than screenshotted — see `render_the_indicator_strip`
+in `src/gauge.rs`.
 
 **Number** has no macOS counterpart. A `MenuBarExtra` label can hold an image
 *and* text, so the macOS app draws the ring and writes "23%" beside it. A tray
@@ -123,7 +131,7 @@ the popover still shows — Escape and a second tray click both close it.
 
 ```powershell
 .\build.ps1 -Dev      # debug build
-cargo test            # 104 tests, no network, no filesystem outside a temp dir
+cargo test            # 110 tests, no network, no filesystem outside a temp dir
 ```
 
 `build.ps1` builds to `%LOCALAPPDATA%\claude-quota-build` when the repository
