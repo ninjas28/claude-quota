@@ -8,3 +8,6 @@ menubar/build/
 *.xcodeproj
 .swiftpm/
 DerivedData/
+
+# Rust / Windows port
+windows/target/

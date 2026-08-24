@@ -1,0 +1,57 @@
+[package]
+name = "claude-quota"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Claude usage in the Windows notification area. Checking it doesn't cost quota."
+license = "MIT"
+repository = "https://github.com/ninjas28/claude-quota"
+
+[lib]
+name = "claude_quota"
+path = "src/lib.rs"
+
+[[bin]]
+name = "claude-quota"
+path = "src/main.rs"
+
+[dependencies]
+ab_glyph = "0.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+dirs = "6"
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.35"
+notify = "8"
+raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tiny-skia = "0.12"
+tray-icon = "0.24"
+ureq = { version = "3", features = ["json"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

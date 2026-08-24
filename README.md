@@ -2,9 +2,12 @@
 
 Claude usage in the macOS menu bar. Checking it doesn't cost quota.
 
+**On Windows?** See [`windows/`](windows/) for the notification-area port.
+
 <img src="docs/popover-dark.png" width="420" alt="The popover, showing session and weekly usage with a countdown to each reset">
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black)
+![Windows 10+](https://img.shields.io/badge/Windows-10%2B-black)
 ![MIT license](https://img.shields.io/badge/license-MIT-blue)
 
 ## Install
