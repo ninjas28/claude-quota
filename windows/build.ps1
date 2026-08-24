@@ -19,6 +19,11 @@
     Named -Dev rather than -Debug because -Debug is a PowerShell common parameter
     and redeclaring it is an error.
 
+.PARAMETER PathOnly
+    Resolve and print where the binary would be, without building. Lets
+    install.ps1 -SkipBuild find the last build without having to duplicate the
+    target-directory rules above.
+
 .PARAMETER TargetDir
     Where to put build artifacts. Defaults to CARGO_TARGET_DIR, then to the
     out-of-sync-folder location described above, then to ./target.
@@ -26,6 +31,7 @@
 [CmdletBinding()]
 param(
     [switch] $Dev,
+    [switch] $PathOnly,
     [string] $TargetDir
 )
 
@@ -44,8 +50,10 @@ function Resolve-TargetDir {
     foreach ($name in $synced) {
         if ($PSScriptRoot -like "*$name*") {
             $fallback = Join-Path $env:LOCALAPPDATA 'claude-quota-build'
-            Write-Host "==> Repository is inside $name; building to $fallback instead" -ForegroundColor Yellow
-            Write-Host "    (a Rust target directory is ~2 GB of constantly-changing files)"
+            if (-not $PathOnly) {
+                Write-Host "==> Repository is inside $name; building to $fallback instead" -ForegroundColor Yellow
+                Write-Host "    (a Rust target directory is ~2 GB of constantly-changing files)"
+            }
             return $fallback
         }
     }
@@ -56,11 +64,15 @@ $resolved = Resolve-TargetDir
 $env:CARGO_TARGET_DIR = $resolved
 $profileName = if ($Dev) { 'debug' } else { 'release' }
 
+$exe = Join-Path $resolved "$profileName\claude-quota.exe"
+
+if ($PathOnly) {
+    return $exe
+}
+
 Write-Host "==> Building ($profileName)"
 if ($Dev) { cargo build } else { cargo build --release }
 if ($LASTEXITCODE -ne 0) { Write-Error "cargo build failed" }
-
-$exe = Join-Path $resolved "$profileName\claude-quota.exe"
 if (-not (Test-Path $exe)) { Write-Error "build succeeded but no binary at $exe" }
 
 Write-Host "==> Built: $exe" -ForegroundColor Green

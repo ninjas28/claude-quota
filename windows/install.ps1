@@ -113,8 +113,13 @@ if ($Uninstall) {
 # --- Build ------------------------------------------------------------------
 
 if ($SkipBuild) {
-    $built = $InstalledExe
-    if (-not (Test-Path $built)) { Write-Error "-SkipBuild given but nothing is installed at $built" }
+    # The last build, not the installed copy. After an uninstall there is no
+    # installed copy to reinstall from, and reinstalling from one is circular
+    # anyway -- -SkipBuild means "don't compile again", not "don't install".
+    $built = & (Join-Path $PSScriptRoot 'build.ps1') -PathOnly | Select-Object -Last 1
+    if (-not (Test-Path $built)) {
+        Write-Error "-SkipBuild given but there is no build at $built. Re-run without -SkipBuild."
+    }
 } else {
     $built = & (Join-Path $PSScriptRoot 'build.ps1') | Select-Object -Last 1
     if (-not (Test-Path $built)) { Write-Error "build did not produce a binary" }
