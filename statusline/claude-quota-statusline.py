@@ -156,6 +156,17 @@ def run_chained(command, raw):
 
 
 def main():
+    # The bar is drawn with block characters, and on Windows a piped stdout
+    # defaults to the locale codepage -- cp1252, which cannot encode them. The
+    # print then raises, the blanket except below swallows it, and the status
+    # line comes out empty while the cache carries on working: the one failure
+    # mode that looks like the script is fine. Ask for UTF-8, which is what
+    # reads the output anyway.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass  # Python < 3.7, or a stdout that cannot be reconfigured.
+
     raw = sys.stdin.read()
 
     try:
