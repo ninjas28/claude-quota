@@ -108,9 +108,16 @@ command into the `chain` key of `%APPDATA%\ClaudeQuota\settings.json`; the
 bridge feeds it the untouched stdin through `cmd.exe` and prints its output.
 `claude-quota.exe remove-statusline` puts it back.
 
-**The Python bridge still works.** `statusline/claude-quota-statusline.py` from
-the macOS tree writes the identical cache file, and the app reads it either way.
-The exe subcommand is the default only because it removes the question of
+**The Python bridge also works**, with one repair. `statusline/claude-quota-statusline.py`
+from the macOS tree writes the identical cache file and the app reads it either
+way. But its status line came out *blank* on Windows: the bar is drawn with
+block characters, a piped stdout defaults to the locale codepage, cp1252 cannot
+encode them, and the script's blanket `except` swallowed the error — so the
+cache kept updating while the status line showed nothing, which is the one
+failure mode that looks like everything is fine. It now asks for UTF-8
+explicitly.
+
+The exe subcommand is still the default, because it removes the question of
 whether `python` is on PATH in whichever shell Claude Code picked.
 
 **One window, two shapes.** macOS gets the popover from `MenuBarExtra` for
