@@ -204,6 +204,35 @@ final class PresentationTests: XCTestCase {
         XCTAssertNil(ClaudeCredentials.planLabel(subscriptionType: nil, rateLimitTier: nil))
     }
 
+    /// The generic tier names the product, not the plan, so it has to defer to
+    /// the subscription type.
+    ///
+    /// A plain Pro account reports `default_claude_ai`. Stripping the prefixes
+    /// leaves the bare word "ai", and taking that at face value badged the
+    /// account "Ai" in the popover header.
+    func testGenericTierDefersToSubscriptionType() {
+        XCTAssertEqual(
+            ClaudeCredentials.planLabel(subscriptionType: "pro", rateLimitTier: "default_claude_ai"),
+            "Pro"
+        )
+        XCTAssertEqual(
+            ClaudeCredentials.planLabel(subscriptionType: "max", rateLimitTier: "claude_ai"),
+            "Max"
+        )
+        // Nothing to fall back to is better said with no badge than with "Ai".
+        XCTAssertNil(
+            ClaudeCredentials.planLabel(subscriptionType: nil, rateLimitTier: "default_claude_ai")
+        )
+        // A tier that does name a plan still wins over the subscription type.
+        XCTAssertEqual(
+            ClaudeCredentials.planLabel(
+                subscriptionType: "pro",
+                rateLimitTier: "default_claude_ai_max_5x"
+            ),
+            "Max (5x)"
+        )
+    }
+
     /// An unfamiliar tier should still produce something readable rather than
     /// leaking a raw identifier into the header.
     func testUnknownTierIsStillHumanReadable() {

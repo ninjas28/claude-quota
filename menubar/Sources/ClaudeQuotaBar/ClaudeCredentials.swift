@@ -29,6 +29,11 @@ struct ClaudeCredentials {
                 .replacingOccurrences(of: "claude_", with: "")
                 .split(separator: "_")
                 .map(String.init)
+                // "ai" is what "claude_ai" leaves behind: it names the product,
+                // not the plan. On a plain Pro account the tier is exactly
+                // `default_claude_ai`, so it is all that survives the stripping
+                // above — and the header ends up badging the account "Ai".
+                .filter { $0 != "ai" }
 
             // A trailing "5x" is the plan multiplier, not part of its name.
             var multiplier: String?
