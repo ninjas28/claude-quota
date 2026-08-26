@@ -44,11 +44,27 @@ import sys
 import tempfile
 import time
 
-DEFAULT_CACHE = "~/.claude/quota-bar-cache.json"
+CACHE_NAME = "quota-bar-cache.json"
+
+
+def claude_home():
+    """`~/.claude`, honouring Claude Code's own `CLAUDE_CONFIG_DIR` override.
+
+    `windows/src/paths.rs` resolves the cache under the same variable, so
+    ignoring it here would have the bridge write one place and the app read
+    another.
+    """
+    override = os.environ.get("CLAUDE_CONFIG_DIR")
+    if override:
+        return override
+    return os.path.expanduser("~/.claude")
 
 
 def cache_path():
-    return os.path.expanduser(os.environ.get("CLAUDE_QUOTA_CACHE") or DEFAULT_CACHE)
+    override = os.environ.get("CLAUDE_QUOTA_CACHE")
+    if override:
+        return os.path.expanduser(override)
+    return os.path.join(claude_home(), CACHE_NAME)
 
 
 def as_dict(value):

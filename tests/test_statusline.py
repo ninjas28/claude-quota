@@ -28,6 +28,24 @@ CACHE_READER = os.path.join(
 )
 
 
+def sandbox_env(home, **extra):
+    """A child environment that cannot reach the real `~/.claude`.
+
+    `HOME` alone is not enough. On Windows `os.path.expanduser` resolves
+    `USERPROFILE`, then `HOMEDRIVE`/`HOMEPATH`, and never consults `HOME` -- so
+    a suite that sandboxed itself with `HOME` ran the installer against the
+    developer's live settings.json, and `--apply` wired a temp path that
+    `tearDown` then deleted into it. `CLAUDE_CONFIG_DIR` is what install.py and
+    the bridge actually read, so it is the one that has to be set.
+    """
+    environment = dict(os.environ)
+    environment["HOME"] = home
+    environment["USERPROFILE"] = home
+    environment["CLAUDE_CONFIG_DIR"] = os.path.join(home, ".claude")
+    environment.update(extra)
+    return environment
+
+
 def swift_cache_keys():
     """Every JSON key StatusLineCache.swift actually looks up.
 
@@ -346,9 +364,34 @@ class TestInstaller(unittest.TestCase):
     def settings_path(self):
         return os.path.join(self.home, ".claude", "settings.json")
 
+    def test_config_dir_decides_where_apply_writes(self):
+        """The guard the rest of this class depends on.
+
+        This is a real incident, not a hypothetical: the suite sandboxed itself
+        with `HOME`, Windows ignored it, and `--apply` wrote a temp path into
+        the developer's live settings.json -- which `tearDown` then deleted,
+        leaving the status line pointing at nothing for two days. Point `HOME`
+        somewhere else entirely and the config dir still has to win.
+        """
+        decoy = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, decoy, ignore_errors=True)
+        os.makedirs(os.path.join(decoy, ".claude"))
+
+        environment = sandbox_env(self.home, HOME=decoy, USERPROFILE=decoy)
+        result = subprocess.run(
+            [sys.executable, INSTALLER, "--apply"],
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=15,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.exists(self.settings_path))
+        self.assertFalse(os.path.exists(os.path.join(decoy, ".claude", "settings.json")))
+
     def run_installer(self, *args):
-        environment = dict(os.environ)
-        environment["HOME"] = self.home
+        environment = sandbox_env(self.home)
         result = subprocess.run(
             [sys.executable, INSTALLER, *args],
             capture_output=True,
@@ -470,8 +513,7 @@ class TestInstallerQuoting(unittest.TestCase):
             return json.load(file)["statusLine"]["command"]
 
     def install(self, installer=INSTALLER):
-        environment = dict(os.environ)
-        environment["HOME"] = self.home
+        environment = sandbox_env(self.home)
         result = subprocess.run(
             [sys.executable, installer, "--apply"],
             capture_output=True, text=True, env=environment, timeout=15,
@@ -488,9 +530,7 @@ class TestInstallerQuoting(unittest.TestCase):
 
         self.install(os.path.join(spaced, "install.py"))
 
-        environment = dict(os.environ)
-        environment["HOME"] = self.home
-        environment["CLAUDE_QUOTA_CACHE"] = self.cache
+        environment = sandbox_env(self.home, CLAUDE_QUOTA_CACHE=self.cache)
         result = subprocess.run(
             self.installed_command(),
             shell=True, input=json.dumps(full_payload()),

@@ -18,15 +18,33 @@ import shutil
 import sys
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude-quota-statusline.py")
-SETTINGS = os.path.expanduser("~/.claude/settings.json")
 MARKER = "claude-quota-statusline.py"
+
+
+def claude_home():
+    """`~/.claude`, honouring Claude Code's own `CLAUDE_CONFIG_DIR` override.
+
+    The override is not just a convenience: it is the only thing that keeps a
+    test run off the real settings file on Windows. `expanduser` there resolves
+    `USERPROFILE`, then `HOMEDRIVE`/`HOMEPATH`, and never consults `HOME` -- so
+    a suite that sandboxes itself by setting `HOME` still writes to the user's
+    live `~/.claude/settings.json`, and `--apply` bakes a temp path into it.
+    `windows/src/paths.rs` reads the same variable.
+    """
+    override = os.environ.get("CLAUDE_CONFIG_DIR")
+    if override:
+        return override
+    return os.path.expanduser("~/.claude")
+
+
+SETTINGS = os.path.join(claude_home(), "settings.json")
 
 
 def load_settings():
     if not os.path.exists(SETTINGS):
         return {}
     try:
-        with open(SETTINGS) as file:
+        with open(SETTINGS, encoding="utf-8") as file:
             return json.load(file)
     except Exception as error:
         sys.exit("error: could not parse %s (%s)" % (SETTINGS, error))
@@ -80,7 +98,7 @@ def save(settings):
         backup = SETTINGS + ".quota-bar-backup"
         shutil.copy2(SETTINGS, backup)
         print("Backed up existing settings to %s" % backup)
-    with open(SETTINGS, "w") as file:
+    with open(SETTINGS, "w", encoding="utf-8") as file:
         json.dump(settings, file, indent=2)
         file.write("\n")
 
